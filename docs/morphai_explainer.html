@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MorphAI — How It Works</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0e1117;
+    color: #ffffff;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100vh;
+    padding: 32px 24px 64px;
+  }
+  h1 {
+    text-align: center;
+    font-size: 28px;
+    font-weight: 700;
+    color: #4CAF50;
+    letter-spacing: -0.5px;
+    margin-bottom: 6px;
+  }
+  .subtitle {
+    text-align: center;
+    color: #aaa;
+    font-size: 14px;
+    margin-bottom: 48px;
+  }
+  .section-title {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: #4CAF50;
+    margin-bottom: 14px;
+  }
+  .panel {
+    background: #1a1a2a;
+    border: 1px solid #2a2a3e;
+    border-radius: 10px;
+    padding: 24px;
+    margin-bottom: 24px;
+  }
+  .panel h2 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 6px;
+  }
+  .panel p {
+    font-size: 13px;
+    color: #bbb;
+    line-height: 1.65;
+    margin-bottom: 12px;
+  }
+  svg text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  #pipeline-svg, #simp-svg, #physics-svg { display: block; width: 100%; }
+  .grid { display: grid; gap: 24px; }
+  @media (min-width: 900px) {
+    .grid-2 { grid-template-columns: 1fr 1fr; }
+  }
+  .label-mono {
+    font-size: 11px;
+    font-family: 'SFMono-Regular', Consolas, monospace;
+    color: #4CAF50;
+    background: #0e2318;
+    border-radius: 4px;
+    padding: 2px 6px;
+    display: inline-block;
+    margin-top: 4px;
+  }
+</style>
+</head>
+<body>
+
+<h1>MorphAI</h1>
+<p class="subtitle">AI-driven topology optimizer for FDM 3D printing &mdash; visual explainer</p>
+
+<!-- SECTION 1: Pipeline -->
+<div class="panel">
+  <div class="section-title">01 &mdash; Full Pipeline</div>
+  <h2>From plain English to a print-ready STL</h2>
+  <p>Five stages — each automatic. No CAD experience required.</p>
+  <svg id="pipeline-svg" height="110"></svg>
+</div>
+
+<!-- SECTION 2: SIMP Loop + Physics side by side -->
+<div class="grid grid-2">
+  <div class="panel">
+    <div class="section-title">02 &mdash; SIMP Algorithm</div>
+    <h2>Material density evolves over iterations</h2>
+    <p>Start: uniform grey slab. Each iteration removes under-stressed elements and reinforces load paths. After ~60 iterations: crisp solid/void topology.</p>
+    <svg id="simp-svg" height="220"></svg>
+    <p style="margin-top:12px;margin-bottom:0;">
+      <span class="label-mono">x_e ∈ [0,1]</span> per element &nbsp;·&nbsp;
+      <span class="label-mono">p=3</span> SIMP penalty &nbsp;·&nbsp;
+      <span class="label-mono">V* = 40%</span> volume target
+    </p>
+  </div>
+
+  <div class="panel">
+    <div class="section-title">03 &mdash; Physics Intuition</div>
+    <h2>Fixed face · Load face · Stress paths</h2>
+    <p>Material concentrates where it carries stress. Everything else is removed — like a sculptor revealing what was already there.</p>
+    <svg id="physics-svg" height="220"></svg>
+    <p style="margin-top:12px;margin-bottom:0;">
+      <span class="label-mono">σ_phys = σ_norm × F [N] / (dx [mm] × t [mm])</span>
+    </p>
+  </div>
+</div>
+
+<!-- SECTION 4: Concept card -->
+<div class="panel">
+  <div class="section-title">04 &mdash; The Core Concept</div>
+  <h2>Minimum material &mdash; maximum stiffness</h2>
+  <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start;">
+    <div style="flex:1;min-width:200px;">
+      <p>
+        The optimizer solves: <em>given a design space, material, and loads — what is the least material needed to not fail?</em>
+      </p>
+      <p>
+        It minimizes <strong>compliance</strong> (= maximizes stiffness) subject to a <strong>volume fraction</strong> limit. The result is structurally identical to hand-engineered parts — achieved automatically.
+      </p>
+    </div>
+    <svg id="objective-svg" width="260" height="130"></svg>
+  </div>
+</div>
+
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+// ─── COLOUR PALETTE ───────────────────────────────────────────────
+const C = {
+  bg:      '#0e1117',
+  panel:   '#1a1a2a',
+  border:  '#2a2a3e',
+  green:   '#4CAF50',
+  blue:    '#1565c0',
+  blueL:   '#1e88e5',
+  red:     'crimson',
+  orange:  '#FF8C00',
+  grey:    '#888',
+  white:   '#fff',
+  dim:     '#bbb',
+};
+
+// ─── 1. PIPELINE ──────────────────────────────────────────────────
+(function pipeline() {
+  const svg = d3.select('#pipeline-svg');
+  const W = svg.node().parentElement.clientWidth - 48;
+  svg.attr('width', W);
+
+  const steps = [
+    { icon: '💬', label: 'Describe part', sub: 'natural language' },
+    { icon: '🤖', label: 'AI extracts BCs', sub: 'faces · force · material' },
+    { icon: '⚡', label: 'SIMP optimizer', sub: '~60 iterations' },
+    { icon: '🧊', label: 'Mesh export', sub: 'marching cubes STL' },
+    { icon: '🖨️', label: '3D print', sub: 'slicer-ready' },
+  ];
+
+  const n = steps.length;
+  const stepW = W / n;
+  const cy = 55;
+
+  // Arrow definitions
+  svg.append('defs').append('marker')
+    .attr('id', 'arr')
+    .attr('viewBox', '0 0 10 10')
+    .attr('refX', 9).attr('refY', 5)
+    .attr('markerWidth', 6).attr('markerHeight', 6)
+    .attr('orient', 'auto')
+    .append('path')
+    .attr('d', 'M0,0 L10,5 L0,10 z')
+    .attr('fill', C.green);
+
+  // Connector lines
+  for (let i = 0; i < n - 1; i++) {
+    const x1 = stepW * i + stepW * 0.65;
+    const x2 = stepW * (i + 1) + stepW * 0.35;
+    svg.append('line')
+      .attr('x1', x1).attr('y1', cy)
+      .attr('x2', x2).attr('y2', cy)
+      .attr('stroke', C.green).attr('stroke-width', 1.5)
+      .attr('marker-end', 'url(#arr)')
+      .attr('opacity', 0)
+      .transition().delay(i * 400 + 600).duration(400)
+      .attr('opacity', 0.7);
+  }
+
+  const g = svg.selectAll('.step')
+    .data(steps).enter()
+    .append('g')
+    .attr('class', 'step')
+    .attr('transform', (_, i) => `translate(${stepW * i + stepW / 2},0)`)
+    .attr('opacity', 0);
+
+  g.transition().delay((_, i) => i * 300).duration(500)
+    .attr('opacity', 1);
+
+  // Circle background
+  g.append('circle')
+    .attr('cx', 0).attr('cy', cy)
+    .attr('r', 26)
+    .attr('fill', C.panel)
+    .attr('stroke', C.green)
+    .attr('stroke-width', 1.5);
+
+  // Emoji icon
+  g.append('text')
+    .attr('x', 0).attr('y', cy + 8)
+    .attr('text-anchor', 'middle')
+    .attr('font-size', '18px')
+    .text(d => d.icon);
+
+  // Label
+  g.append('text')
+    .attr('x', 0).attr('y', cy + 44)
+    .attr('text-anchor', 'middle')
+    .attr('fill', C.white)
+    .attr('font-size', '11px')
+    .attr('font-weight', '600')
+    .text(d => d.label);
+
+  g.append('text')
+    .attr('x', 0).attr('y', cy + 58)
+    .attr('text-anchor', 'middle')
+    .attr('fill', C.grey)
+    .attr('font-size', '10px')
+    .text(d => d.sub);
+})();
+
+
+// ─── 2. SIMP ANIMATION ────────────────────────────────────────────
+(function simp() {
+  const svg = d3.select('#simp-svg');
+  const W = svg.node().parentElement.clientWidth - 48;
+  svg.attr('width', W);
+
+  const NX = 24, NY = 12;
+  const cellW = Math.min((W - 60) / NX, 16);
+  const cellH = cellW * 0.75;
+  const gridW = NX * cellW;
+  const gridH = NY * cellH;
+  const ox = (W - gridW) / 2;
+  const oy = 10;
+
+  // Build MBB-like density target (arch/bridge shape)
+  function targetDensity(ex, ey) {
+    const xn = ex / NX, yn = ey / NY;
+    // Diagonal struts from corners + bottom chord
+    const leftStrut  = Math.exp(-30 * ((xn - 0) ** 2 + (yn - 0) ** 2));
+    const rightStrut = Math.exp(-30 * ((xn - 1) ** 2 + (yn - 0) ** 2));
+    const topArch    = Math.exp(-20 * ((yn - 0) ** 2 + (0.5 - Math.abs(xn - 0.5)) * 0.3 ) );
+    const diag1 = Math.exp(-18 * ((yn - xn) ** 2 + (xn - 0.05) ** 2));
+    const diag2 = Math.exp(-18 * ((yn - (1 - xn)) ** 2 + (xn - 0.95) ** 2));
+    const bottomChord = Math.exp(-15 * (yn - 0.92) ** 2);
+    const v = Math.min(1, leftStrut * 4 + rightStrut * 4 + diag1 * 3 + diag2 * 3 + bottomChord * 2 + topArch);
+    return v;
+  }
+
+  // Initial: uniform grey
+  const cellData = [];
+  for (let ey = 0; ey < NY; ey++) {
+    for (let ex = 0; ex < NX; ex++) {
+      cellData.push({ ex, ey, rho: 0.4, target: targetDensity(ex, ey) });
+    }
+  }
+
+  const densityColor = d3.scaleSequential()
+    .domain([0, 1])
+    .interpolator(t => {
+      // White (void) → blue (mid) → dark blue (solid)
+      const r = Math.round(d3.interpolateRgb('#0e1117', C.blueL)(t) .match(/\d+/g)[0]);
+      return d3.interpolateRgb('#1a1a2a', C.blueL)(t);
+    });
+
+  const cells = svg.append('g')
+    .selectAll('rect')
+    .data(cellData)
+    .enter().append('rect')
+    .attr('x', d => ox + d.ex * cellW)
+    .attr('y', d => oy + d.ey * cellH)
+    .attr('width', cellW - 1)
+    .attr('height', cellH - 1)
+    .attr('rx', 1)
+    .attr('fill', densityColor(0.4));
+
+  // Iteration counter label
+  const iterLabel = svg.append('text')
+    .attr('x', W / 2).attr('y', oy + gridH + 22)
+    .attr('text-anchor', 'middle')
+    .attr('fill', C.dim)
+    .attr('font-size', '12px')
+    .text('Iteration 0 — initializing');
+
+  const qualLabel = svg.append('text')
+    .attr('x', W / 2).attr('y', oy + gridH + 40)
+    .attr('text-anchor', 'middle')
+    .attr('fill', C.grey)
+    .attr('font-size', '11px')
+    .text('');
+
+  // Animate iterations
+  const ITERS = 30;
+  let iter = 0;
+
+  function step() {
+    iter++;
+    const t = iter / ITERS;
+    const ease = d3.easeCubicInOut(t);
+
+    cellData.forEach(d => {
+      const noise = (Math.random() - 0.5) * 0.04 * (1 - t);
+      d.rho = 0.4 * (1 - ease) + d.target * ease + noise;
+      d.rho = Math.max(0.02, Math.min(1, d.rho));
+    });
+
+    cells.transition().duration(180)
+      .attr('fill', d => densityColor(d.rho));
+
+    const solidPct = cellData.filter(d => d.rho > 0.8).length / cellData.length * 100;
+    const voidPct  = cellData.filter(d => d.rho < 0.2).length / cellData.length * 100;
+    const bim = solidPct + voidPct;
+
+    iterLabel.text(`Iteration ${iter} / ${ITERS}   ·   bimodality ${bim.toFixed(0)}%`);
+
+    if (bim >= 70) {
+      qualLabel.attr('fill', C.green).text('Converged — topology is crisp');
+    } else if (bim >= 40) {
+      qualLabel.attr('fill', C.orange).text('Converging — grey zones shrinking');
+    } else {
+      qualLabel.attr('fill', C.grey).text('Early iterations — broad search');
+    }
+
+    if (iter < ITERS) {
+      setTimeout(step, 220);
+    } else {
+      // Pause then restart
+      setTimeout(() => {
+        iter = 0;
+        cellData.forEach(d => { d.rho = 0.4; });
+        cells.transition().duration(400).attr('fill', densityColor(0.4));
+        iterLabel.text('Iteration 0 — initializing');
+        qualLabel.text('');
+        setTimeout(step, 800);
+      }, 2400);
+    }
+  }
+
+  setTimeout(step, 600);
+})();
+
+
+// ─── 3. PHYSICS DIAGRAM ───────────────────────────────────────────
+(function physics() {
+  const svg = d3.select('#physics-svg');
+  const W = svg.node().parentElement.clientWidth - 48;
+  svg.attr('width', W);
+
+  const bx = W * 0.15, by = 30;
+  const bw = W * 0.58, bh = 160;
+
+  // Defs: stress gradient + arrow marker
+  const defs = svg.append('defs');
+
+  const grad = defs.append('linearGradient')
+    .attr('id', 'stressGrad')
+    .attr('x1', '0%').attr('y1', '0%')
+    .attr('x2', '100%').attr('y2', '100%');
+  grad.append('stop').attr('offset', '0%').attr('stop-color', C.blueL).attr('stop-opacity', 0.5);
+  grad.append('stop').attr('offset', '40%').attr('stop-color', C.blue).attr('stop-opacity', 0.3);
+  grad.append('stop').attr('offset', '100%').attr('stop-color', 'crimson').attr('stop-opacity', 0.0);
+
+  defs.append('marker')
+    .attr('id', 'arrRed')
+    .attr('viewBox', '0 0 10 10').attr('refX', 9).attr('refY', 5)
+    .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
+    .append('path').attr('d', 'M0,0 L10,5 L0,10 z').attr('fill', C.red);
+
+  defs.append('marker')
+    .attr('id', 'arrBlue')
+    .attr('viewBox', '0 0 10 10').attr('refX', 9).attr('refY', 5)
+    .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
+    .append('path').attr('d', 'M0,0 L10,5 L0,10 z').attr('fill', C.blueL);
+
+  // Design space bounding box
+  svg.append('rect')
+    .attr('x', bx).attr('y', by)
+    .attr('width', bw).attr('height', bh)
+    .attr('fill', 'url(#stressGrad)')
+    .attr('stroke', C.border)
+    .attr('stroke-width', 1.5)
+    .attr('rx', 4);
+
+  // Optimized topology shape — simple arch silhouette
+  const arcPath = `
+    M ${bx},${by + bh}
+    L ${bx},${by + bh * 0.55}
+    Q ${bx + bw * 0.12},${by + bh * 0.1} ${bx + bw * 0.35},${by + bh * 0.18}
+    Q ${bx + bw * 0.5},${by + bh * 0.05} ${bx + bw * 0.65},${by + bh * 0.18}
+    Q ${bx + bw * 0.88},${by + bh * 0.1} ${bx + bw},${by + bh * 0.55}
+    L ${bx + bw},${by + bh}
+    Z
+  `;
+
+  svg.append('path')
+    .attr('d', arcPath)
+    .attr('fill', C.blue)
+    .attr('opacity', 0.75)
+    .attr('stroke', C.blueL)
+    .attr('stroke-width', 1);
+
+  // Fixed face — left side hatching
+  const hatchG = svg.append('g').attr('opacity', 0.9);
+  for (let i = 0; i <= 8; i++) {
+    const y = by + (bh / 8) * i;
+    hatchG.append('line')
+      .attr('x1', bx - 14).attr('y1', y - 8)
+      .attr('x2', bx).attr('y2', y)
+      .attr('stroke', C.blueL).attr('stroke-width', 1.5);
+  }
+  svg.append('rect')
+    .attr('x', bx - 3).attr('y', by)
+    .attr('width', 3).attr('height', bh)
+    .attr('fill', C.blueL);
+  svg.append('text')
+    .attr('x', bx - 18).attr('y', by + bh / 2 - 6)
+    .attr('text-anchor', 'middle')
+    .attr('fill', C.blueL).attr('font-size', '10px').attr('font-weight', '600')
+    .attr('transform', `rotate(-90, ${bx - 18}, ${by + bh / 2})`)
+    .text('FIXED');
+
+  // Force arrows — right face, pointing down
+  const ax = bx + bw + 10;
+  [0.2, 0.5, 0.8].forEach(frac => {
+    const fy = by + bh * frac;
+    svg.append('line')
+      .attr('x1', ax + 30).attr('y1', fy - 18)
+      .attr('x2', ax + 30).attr('y2', fy + 18)
+      .attr('stroke', C.red).attr('stroke-width', 2)
+      .attr('marker-end', 'url(#arrRed)');
+  });
+  svg.append('text')
+    .attr('x', ax + 30).attr('y', by + bh + 16)
+    .attr('text-anchor', 'middle')
+    .attr('fill', C.red).attr('font-size', '10px').attr('font-weight', '600')
+    .text('500 N');
+
+  // Stress path annotation
+  svg.append('text')
+    .attr('x', bx + bw * 0.5).attr('y', by + bh * 0.72)
+    .attr('text-anchor', 'middle')
+    .attr('fill', '#ffffff').attr('font-size', '11px').attr('opacity', 0.85)
+    .text('optimized topology');
+
+  svg.append('text')
+    .attr('x', bx + bw * 0.5).attr('y', by + bh * 0.86)
+    .attr('text-anchor', 'middle')
+    .attr('fill', C.dim).attr('font-size', '10px')
+    .text('material follows load paths');
+})();
+
+
+// ─── 4. OBJECTIVE CARD ────────────────────────────────────────────
+(function objective() {
+  const svg = d3.select('#objective-svg');
+  const W = 260, H = 130;
+
+  // Compliance curve (decreasing)
+  const iterData = d3.range(0, 61).map(i => ({
+    x: i,
+    y: 350 * Math.exp(-i / 12) + 50 + Math.random() * (i < 5 ? 15 : 3),
+  }));
+  const xs = d3.scaleLinear().domain([0, 60]).range([36, W - 10]);
+  const ys = d3.scaleLinear().domain([40, 400]).range([H - 24, 10]);
+
+  const line = d3.line().x(d => xs(d.x)).y(d => ys(d.y)).curve(d3.curveCatmullRom);
+
+  svg.append('g').call(d3.axisLeft(ys).ticks(4).tickSize(3))
+    .attr('transform', `translate(36,0)`)
+    .call(g => g.select('.domain').attr('stroke', C.border))
+    .call(g => g.selectAll('line').attr('stroke', C.border))
+    .call(g => g.selectAll('text').attr('fill', C.grey).attr('font-size', '9px'));
+
+  svg.append('g').call(d3.axisBottom(xs).ticks(5).tickSize(3))
+    .attr('transform', `translate(0,${H - 24})`)
+    .call(g => g.select('.domain').attr('stroke', C.border))
+    .call(g => g.selectAll('line').attr('stroke', C.border))
+    .call(g => g.selectAll('text').attr('fill', C.grey).attr('font-size', '9px'));
+
+  svg.append('text').attr('x', 36).attr('y', 6)
+    .attr('fill', C.grey).attr('font-size', '9px').text('Compliance C');
+  svg.append('text').attr('x', W - 8).attr('y', H - 10)
+    .attr('text-anchor', 'end')
+    .attr('fill', C.grey).attr('font-size', '9px').text('Iteration');
+
+  const path = svg.append('path')
+    .datum(iterData)
+    .attr('fill', 'none')
+    .attr('stroke', C.green)
+    .attr('stroke-width', 2)
+    .attr('d', line);
+
+  const totalLength = path.node().getTotalLength();
+  path.attr('stroke-dasharray', `${totalLength} ${totalLength}`)
+    .attr('stroke-dashoffset', totalLength)
+    .transition().duration(2000).ease(d3.easeCubicOut)
+    .attr('stroke-dashoffset', 0);
+
+  // Converged marker
+  svg.append('circle')
+    .attr('cx', xs(55)).attr('cy', ys(52))
+    .attr('r', 4).attr('fill', C.green).attr('opacity', 0)
+    .transition().delay(1900).duration(300).attr('opacity', 1);
+
+  svg.append('text')
+    .attr('x', xs(55) - 4).attr('y', ys(52) - 9)
+    .attr('text-anchor', 'middle')
+    .attr('fill', C.green).attr('font-size', '9px').attr('opacity', 0)
+    .text('converged')
+    .transition().delay(2000).duration(300).attr('opacity', 1);
+})();
+</script>
+</body>
+</html>

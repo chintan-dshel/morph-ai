@@ -1,0 +1,38 @@
+# === SECRETS — never commit ===
+.streamlit/secrets.toml
+
+# === INTERNAL / GENERATED — not for public repo ===
+Test_Protocol_AI_Design_Engine.docx
+generate_test_doc.py
+how-it-works.html
+docs/screenshot_instructions.txt
+
+# === LOCAL SNAPSHOTS / BINARY BLOBS ===
+*.snapshot.*
+grill-support-bracket-1.snapshot.2/
+
+# === PYTHON ===
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+*.egg
+
+# === STREAMLIT CACHE ===
+.streamlit/cache/
+
+# === OS ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === EDITORS ===
+.vscode/
+.idea/
+*.swp
+*.swo

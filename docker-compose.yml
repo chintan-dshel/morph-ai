@@ -1,0 +1,24 @@
+version: "3.8"
+
+services:
+  ai-design-engine:
+    build: .
+    image: ai-design-engine:latest
+    container_name: ai-design-engine
+    ports:
+      - "8501:8501"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    environment:
+      - PYTHONUNBUFFERED=1
+      # Pass your AI provider key at runtime:
+      #   ANTHROPIC_API_KEY=sk-ant-... docker compose up
+      #   OPENAI_API_KEY=sk-...        docker compose up
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}

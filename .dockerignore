@@ -1,0 +1,25 @@
+# Never let secrets into a Docker image
+.streamlit/secrets.toml
+
+# Dev artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Internal docs / test tooling
+Test_Protocol_AI_Design_Engine.docx
+generate_test_doc.py
+how-it-works.html
+*.snapshot.*
+
+# Git
+.git/
+.gitignore
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
