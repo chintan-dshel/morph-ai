@@ -1,109 +1,70 @@
+---
+title: MorphAI
+emoji: 🔧
+sdk: streamlit
+sdk_version: 1.30.0
+app_file: app.py
+pinned: false
+---
+
 # MorphAI — AI-Driven Topology Optimizer for FDM 3D Printing
 
 Describe a mechanical part in plain English. MorphAI extracts the boundary conditions, runs the SIMP topology optimization algorithm, and gives you a print-ready STL with calibrated von Mises stress output — in under 60 seconds.
 
-![MorphAI screenshot](docs/screenshot.png)
+[Live demo on HF Spaces](#) · [Watch the demo](TODO)
 
 ---
 
-## What it does
+## What's interesting about this
 
-Topology optimization answers: *given a design space, material, and loads — what is the minimum-material structure that won't fail?* Professional tools (Altair OptiStruct, ANSYS) cost tens of thousands of dollars and require engineering expertise to set up. MorphAI makes the same physics accessible through a chat interface.
+- **Natural language → engineering constraints.** A Claude/GPT extraction layer reads a plain-English description ("wall bracket, holds 20 kg, fixed left, PLA") and extracts face constraints, force direction, magnitude, and material — no form-filling required. This is one of the few AI generalist projects applying LLMs to physics-based optimization rather than text or image tasks.
 
-**Core capabilities:**
-- **Natural language → boundary conditions**: Tell the AI "I need a wall bracket that holds 20 kg, fixed on the left, made of PLA." It extracts face constraints, force direction, magnitude, and material — no form-filling.
-- **SIMP optimizer**: The same algorithm used in aerospace and automotive design. Drives material to zero where it isn't structurally needed.
-- **Physical stress output**: Von Mises stress in real MPa (not normalized). Compares against material yield strength with your chosen safety factor.
-- **Print-ready STL**: Export the optimized topology directly to your slicer. Optional infill pattern generation (Gyroid, Schwartz-P, Honeycomb, Diamond).
-- **Multi-provider AI**: Works with OpenAI, Anthropic Claude, Google Gemini, Ollama (local), and any litellm-supported model. Presets work with no API key at all.
+- **Hand-implemented SIMP solver.** The topology optimizer is not a wrapper around an existing solver library. The SIMP (Solid Isotropic Material with Penalization) algorithm, sparse FEA stiffness assembly, density filter, and optimality criteria update are written from scratch using NumPy and SciPy sparse. The same algorithm is used in aerospace and automotive design tools costing tens of thousands of dollars.
 
----
+- **2D + 3D solver pipeline.** The 2D Q4 plane-stress solver handles most bracket and plate problems. A true 3D hexahedral solver (`simp_core_3d`) is available for volumetric parts — same SIMP loop, 24 DOF per hex element, full 3D stress and displacement fields.
 
-## Quick start (local)
-
-```bash
-git clone https://github.com/your-username/morphai
-cd morphai
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-Open `http://localhost:8501`. Click a **Quick Start preset** — results in ~30 seconds, no API key needed.
-
-To enable AI chat extraction, add your key in the AI Settings panel (never written to disk).
+- **Physically calibrated stress output.** Von Mises stress is returned in real MPa (not normalized), scaled by actual force magnitude and element size, compared against material yield strength with a user-chosen safety factor. The result is actionable for real print decisions.
 
 ---
 
 ## Tech stack
 
-| Layer | What |
-|---|---|
-| UI | Streamlit |
-| Optimizer | SIMP (Solid Isotropic Material with Penalization) — 2D Q4 plane-stress FEA + 3D hex |
-| FEA solver | SciPy sparse LU (`spsolve`) |
-| Surface extraction | scikit-image marching cubes |
-| Mesh voxelization | trimesh |
-| AI extraction | litellm (multi-provider gateway) |
-| Visualization | Plotly 3D |
-| FEM mesh export | gmsh (optional, local only) |
+Streamlit · NumPy · SciPy sparse · scikit-image (marching cubes) · Plotly 3D · litellm (multi-provider LLM gateway) · trimesh
 
 ---
 
-## How the physics works
+## Running locally
 
-The optimizer minimizes structural compliance (= maximizes stiffness) subject to a volume constraint:
-
-```
-minimize  C = F^T U
-subject to  K(x) U = F,   sum(x_e) ≤ V* · n
-```
-
-Each element has a density `x_e ∈ [0,1]`. The SIMP penalty `x^p` (p=3 by default) makes intermediate densities structurally expensive, driving the result toward a crisp solid/void topology.
-
-Stress output is physically calibrated:
-```
-σ_phys [MPa] = σ_norm × F_mag [N] / (dx_mm × thickness_mm)
+```bash
+git clone https://github.com/chintan-dshel/morph-ai
+cd morph-ai
+pip install -r requirements.txt
+streamlit run app.py
 ```
 
-This is exact for plane-stress Q4 elements — the material stiffness cancels in the derivation.
+Click a **Quick Start preset** — results in ~30 seconds, no API key needed. To enable AI chat extraction, add your key in the AI Settings panel (never written to disk). With `ANTHROPIC_API_KEY` set as an environment variable, the key is loaded automatically.
 
 ---
 
-## Deployment (Streamlit Cloud)
+## Secrets (for Space operators)
 
-1. Fork this repo
-2. Go to [share.streamlit.io](https://share.streamlit.io) → New app → select your fork → `app.py`
-3. Add secrets in the Streamlit Cloud dashboard (optional):
-   ```toml
-   # .streamlit/secrets.toml
-   ANTHROPIC_API_KEY = "sk-ant-..."
-   OPENAI_API_KEY    = "sk-..."
-   ```
-4. Deploy — gmsh is disabled automatically on Cloud (all other features work)
+Set `ANTHROPIC_API_KEY` as a Space Secret to enable the chat extraction feature for all visitors without requiring them to supply their own key.
+
+---
+
+## Planned v2
+
+A React + FastAPI prototype with no Streamlit dependency lives in `frontend-experimental/`. Planned work: wire the LLM extraction layer from `chat.py` into the FastAPI backend.
 
 ---
 
 ## Validation
 
 The MBB beam benchmark (Sigmund 2001) is built in. Under Convergence → MBB Benchmark:
+
 - nelx=60, nely=20, volfrac=0.5, p=3, rmin=1.5
 - Expected compliance: **C ≈ 187.96**
 - Pass threshold: < 5% error
-
----
-
-## Structure
-
-```
-app.py          — Streamlit UI (orchestrator)
-optimizer.py    — SIMP core, filter, load case builders
-visualization.py — Plotly 3D traces, marching cubes surface
-geometry.py     — Infill generation, STL export
-materials.py    — Material database, Ashby analysis
-chat.py         — LLM extraction, multi-provider config
-meshing.py      — FEM mesh generation (gmsh, optional)
-utils.py        — Print time estimator, history records
-```
 
 ---
 
