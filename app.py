@@ -1676,7 +1676,7 @@ font-size:0.76rem;color:#37474f;'>
 Try a <strong style='color:#546e7a;'>Quick Start preset</strong> on the left to see results in under 60 seconds — no API key needed.
 </div>
 </div>""", unsafe_allow_html=True)
-        else:
+        elif _has_results:
             # ── View selector: 3 primary tabs + More drawer ────
             _rv_primary = ["🔷 Topology", "📈 Convergence", "💾 Export"]
             _rv_secondary = ["🧩 Infill", "🗺️ Density Map", "📊 Pareto",
