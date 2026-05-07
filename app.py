@@ -725,15 +725,38 @@ result_mode  = st.session_state.get("mode", "Single Material") if _has_results e
 expert_mode = st.session_state["expert_mode"]
 
 # ─────────────────────────────────────────────────────────────
-#  2-PANEL LAYOUT
+#  LAYOUT — chat-first landing vs 2-panel results view
 # ─────────────────────────────────────────────────────────────
-_left_col, _right_col = st.columns([2, 8])
+_landing = (not expert_mode and not _has_results
+            and st.session_state["chat_state"] not in ("running",))
+if _landing:
+    _, _left_col, _ = st.columns([1, 4, 1])
+    _right_col = st.container()
+else:
+    _left_col, _right_col = st.columns([2, 8] if expert_mode else [3, 7])
 
 # ─────────────────────────────────────────────────────────────
 #  LEFT COLUMN — user interaction panel
 # ─────────────────────────────────────────────────────────────
 with _left_col:
     if not expert_mode:
+
+        if _landing:
+            st.markdown(
+                "<div style='text-align:center;padding:1.5rem 0 1.2rem 0;'>"
+                "<div style='font-size:1.75rem;font-weight:800;color:#e8eaf6;"
+                "letter-spacing:-0.03em;line-height:1.25;'>"
+                "Describe a part.<br>Get a print-ready structure."
+                "</div>"
+                "<div style='font-size:0.88rem;color:rgba(255,255,255,0.45);"
+                "margin-top:0.6rem;line-height:1.5;'>"
+                "MorphAI reads your plain-English description, extracts engineering "
+                "constraints, runs a real SIMP topology optimizer, and outputs a "
+                "print-ready STL — no form-filling required."
+                "</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
 
         # ── Provider/model/key config ─────────────────────────
         _has_key = bool(st.session_state["llm_api_key"])
@@ -913,7 +936,7 @@ with _left_col:
 
             with st.form("chat_form", clear_on_submit=True):
                 user_msg = st.text_area(
-                    "Your description:", height=80,
+                    "Your description:", height=120 if _landing else 80,
                     placeholder="e.g. I need a bracket fixed on the left that holds 50kg from the top, made of Nylon PA12.",
                     label_visibility="collapsed",
                 )
@@ -1602,7 +1625,7 @@ with _right_col:
 
     # ── VIEW SELECTOR + CONTENT ───────────────────────────────
     else:
-        if not _has_results:
+        if not _has_results and not _landing:
             # ── Design preview (no results yet) ───────────────
             st.caption("Design space · boundary conditions preview")
             _fig_pre = go.Figure()
