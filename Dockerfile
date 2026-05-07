@@ -18,12 +18,12 @@ COPY app.py optimizer.py visualization.py geometry.py \
 #   ANTHROPIC_API_KEY=sk-ant-... docker compose up
 COPY .streamlit/config.toml .streamlit/config.toml
 
-EXPOSE 8501
+EXPOSE 7860
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl --fail http://localhost:8501/_stcore/health || exit 1
+    CMD curl --fail http://localhost:7860/_stcore/health || exit 1
 
 CMD ["streamlit", "run", "app.py", \
-     "--server.port=8501", \
+     "--server.port=7860", \
      "--server.address=0.0.0.0", \
      "--server.headless=true"]

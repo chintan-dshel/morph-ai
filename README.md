@@ -1,9 +1,7 @@
 ---
 title: MorphAI
 emoji: 🔧
-sdk: streamlit
-sdk_version: 1.30.0
-app_file: app.py
+sdk: docker
 pinned: false
 ---
 
@@ -11,7 +9,7 @@ pinned: false
 
 Describe a mechanical part in plain English. MorphAI extracts the boundary conditions, runs the SIMP topology optimization algorithm, and gives you a print-ready STL with calibrated von Mises stress output — in under 60 seconds.
 
-[Live demo on HF Spaces](#) · [Watch the demo](TODO)
+[Live demo on HF Spaces](https://huggingface.co/spaces/cdshelat/MorphAI) · [Watch the demo](TODO)
 
 ---
 
