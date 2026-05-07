@@ -1,0 +1,1026 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>MorphAI — Topology Optimizer</title>
+  <meta name="viewport" content="width=1440" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body, #root { margin: 0; padding: 0; height: 100%; background: #0e1117; color: #e8eaf6; font-family: Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    button, input, select, textarea { font-family: inherit; }
+    button { cursor: pointer; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.12); }
+    @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+  const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+  // ── Design tokens
+  const T = {
+    bg: "#0e1117", panel: "#141820", side: "#0c0f16", viewer: "#0a0d12",
+    line: "rgba(255,255,255,0.06)", lineStrong: "rgba(255,255,255,0.1)",
+    fg: "#e8eaf6", muted: "rgba(255,255,255,0.55)", faint: "rgba(255,255,255,0.35)",
+    blue: "#42a5f5", blueSolid: "#1565c0",
+    green: "#4CAF50", warn: "#FFC107", red: "#ef5350",
+  };
+
+  // Default materials (overwritten by /api/materials on mount)
+  const DEFAULT_MATERIALS = {
+    "PLA":            { E: 3.5,  rho: 1.24, yield: 50,  color: "#4CAF50", printable: true,  temp: "200–220°C", cost: 0.020, desc: "Easy, stiff, not heat-resistant" },
+    "PETG":           { E: 2.1,  rho: 1.27, yield: 53,  color: "#2196F3", printable: true,  temp: "230–250°C", cost: 0.025, desc: "Tough, moisture-resistant" },
+    "ABS":            { E: 2.3,  rho: 1.05, yield: 44,  color: "#FF9800", printable: true,  temp: "230–250°C", cost: 0.022, desc: "Heat-tolerant, needs enclosure" },
+    "Nylon":          { E: 1.6,  rho: 1.01, yield: 50,  color: "#9C27B0", printable: true,  temp: "240–260°C", cost: 0.040, desc: "Tough, flexible, hygroscopic" },
+    "CF-PETG":        { E: 9.5,  rho: 1.30, yield: 110, color: "#78909C", printable: true,  temp: "240–260°C", cost: 0.080, desc: "Highest stiffness, abrasive" },
+    "Aluminum (ref)": { E: 68.9, rho: 2.70, yield: 276, color: "#CFD8DC", printable: false, temp: "—",        cost: 0,     desc: "For comparison only" },
+  };
+
+  const FACES = [
+    { v: "Left",   axis: "X = 0" },
+    { v: "Right",  axis: "X = W" },
+    { v: "Top",    axis: "Y = H" },
+    { v: "Bottom", axis: "Y = 0" },
+    { v: "Front",  axis: "Z = 0" },
+    { v: "Back",   axis: "Z = D" },
+  ];
+  const FACE_OPTS = FACES.map(f => ({ value: f.v, label: `${f.v}  ·  ${f.axis}` }));
+
+  const DIRS = [
+    { v: "-X", plain: "← Left" },
+    { v: "+X", plain: "Right →" },
+    { v: "-Y", plain: "↓ Down" },
+    { v: "+Y", plain: "Up ↑" },
+    { v: "-Z", plain: "Back" },
+    { v: "+Z", plain: "Front" },
+  ];
+  const dirPlain = d => DIRS.find(x => x.v === d)?.plain || d;
+
+  const FIDELITY = {
+    quick:    { label: "Quick",    note: "~5 s · rough preview" },
+    standard: { label: "Standard", note: "~30 s · recommended" },
+    detail:   { label: "Detail",   note: "~2 min · high res" },
+  };
+
+  // ── Primitives ─────────────────────────────────────────────────────────────
+  function Label({ children }) {
+    return <div style={{ fontSize: 11, fontWeight: 600, color: T.muted, marginBottom: 6 }}>{children}</div>;
+  }
+  function SectionTitle({ children, hint }) {
+    return (
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
+        <div style={{ fontSize: 10.5, fontWeight: 700, color: T.faint, letterSpacing: "0.14em", textTransform: "uppercase" }}>{children}</div>
+        {hint && <div style={{ fontSize: 10.5, color: T.faint }}>{hint}</div>}
+      </div>
+    );
+  }
+  function Slider({ min, max, step = 1, value, onChange, unit, fmt = v => v }) {
+    const pct = ((value - min) / (max - min)) * 100;
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ flex: 1, position: "relative", height: 16 }}>
+          <div style={{ position: "absolute", top: 7, inset: "0 0 auto 0", height: 3, background: "#1a2030", borderRadius: 2 }} />
+          <div style={{ position: "absolute", top: 7, left: 0, width: `${pct}%`, height: 3, background: T.blue, borderRadius: 2 }} />
+          <div style={{ position: "absolute", top: 3, left: `calc(${pct}% - 5px)`, width: 11, height: 11, borderRadius: "50%", background: T.fg, boxShadow: `0 0 0 2px ${T.blueSolid}`, pointerEvents: "none" }} />
+          <input type="range" min={min} max={max} step={step} value={value}
+            onChange={e => onChange(parseFloat(e.target.value))}
+            style={{ position: "absolute", inset: 0, width: "100%", height: 16, opacity: 0, margin: 0, cursor: "pointer" }} />
+        </div>
+        <div style={{ fontFamily: "JetBrains Mono", fontSize: 11.5, color: T.fg, minWidth: 54, textAlign: "right" }}>
+          {fmt(value)}{unit && <span style={{ color: T.faint, marginLeft: 2 }}>{unit}</span>}
+        </div>
+      </div>
+    );
+  }
+  function SliderRow({ label, hint, ...rest }) {
+    return (
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: T.fg, marginBottom: 6 }}>
+          <span>{label}</span>
+          {hint && <span style={{ color: T.faint, fontSize: 11 }}>{hint}</span>}
+        </div>
+        <Slider {...rest} />
+      </div>
+    );
+  }
+  function Select({ value, onChange, options }) {
+    return (
+      <div style={{ position: "relative" }}>
+        <select value={value} onChange={e => onChange(e.target.value)}
+          style={{ width: "100%", appearance: "none", background: "#10141d", border: `1px solid ${T.line}`, borderRadius: 6, color: T.fg, fontSize: 12.5, padding: "8px 28px 8px 10px", outline: "none" }}>
+          {options.map(o => <option key={o.value ?? o} value={o.value ?? o} style={{ background: T.panel }}>{o.label ?? o}</option>)}
+        </select>
+        <svg width="10" height="10" viewBox="0 0 10 10" style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: T.faint }}>
+          <path d="M2 4 L5 7 L8 4" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" />
+        </svg>
+      </div>
+    );
+  }
+  function Segmented({ value, onChange, options }) {
+    return (
+      <div style={{ display: "flex", background: "#10141d", border: `1px solid ${T.line}`, borderRadius: 6, padding: 2 }}>
+        {options.map(o => {
+          const v = o.value ?? o, label = o.label ?? o, active = v === value;
+          return (
+            <button key={v} onClick={() => onChange(v)}
+              style={{ flex: 1, background: active ? "rgba(21,101,192,0.18)" : "transparent", border: "none", color: active ? "#90caf9" : T.muted, fontSize: 12, fontWeight: active ? 600 : 500, padding: "6px 10px", borderRadius: 4 }}>{label}</button>
+          );
+        })}
+      </div>
+    );
+  }
+  function Mark({ size = 22 }) {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <path d="M12 3 L20 7.5 L20 16.5 L12 21 L4 16.5 L4 7.5 Z" stroke={T.blue} strokeWidth="1.3" fill="rgba(21,101,192,0.08)" />
+        <circle cx="12" cy="12" r="2.2" fill={T.blue} />
+      </svg>
+    );
+  }
+
+  // ── AI chat panel ──────────────────────────────────────────────────────────
+  function ChatPanel({ open, onToggle, applied, onApply }) {
+    const [input, setInput] = useState("");
+    return (
+      <div style={{ background: "#10141d", border: `1px solid ${T.line}`, borderRadius: 8, overflow: "hidden" }}>
+        <button onClick={onToggle} style={{ width: "100%", background: "transparent", border: "none", padding: "10px 12px", display: "flex", alignItems: "center", gap: 8, color: T.fg, fontSize: 12.5, fontWeight: 600 }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: T.green, boxShadow: `0 0 5px ${T.green}` }} />
+          <span style={{ flex: 1, textAlign: "left" }}>Describe your part</span>
+          <span style={{ color: T.faint, fontSize: 10, fontWeight: 500 }}>{open ? "Hide" : "Open"}</span>
+        </button>
+        {open && (
+          <div style={{ padding: "4px 12px 12px" }}>
+            {!applied ? (
+              <div style={{ background: "rgba(76,175,80,0.05)", borderLeft: `2px solid ${T.green}`, padding: "10px 12px", borderRadius: "0 6px 6px 0", fontSize: 11.5, lineHeight: 1.5, color: T.fg, marginBottom: 10 }}>
+                <div style={{ color: T.muted, fontSize: 10.5, marginBottom: 6 }}>From: "bracket holding 15 kg, fixed left, PLA"</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
+                  {["PLA", "Fixed: Left", "Load: Right", "↓ Down · 150 N"].map(x =>
+                    <span key={x} style={{ fontFamily: "JetBrains Mono", fontSize: 10.5, background: "rgba(255,255,255,0.04)", padding: "1px 6px", borderRadius: 3 }}>{x}</span>
+                  )}
+                </div>
+                <div style={{ fontSize: 10.5, color: T.warn, marginBottom: 8, display: "flex", alignItems: "center", gap: 5 }}>
+                  <svg width="9" height="9" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" stroke="currentColor" strokeWidth="1" fill="none" /><path d="M5 3 L5 5.5 M5 7 L5 7.2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></svg>
+                  Dimensions not specified — using defaults (100 × 60 × 30)
+                </div>
+                <button onClick={onApply} style={{ background: "transparent", border: `1px solid ${T.blueSolid}`, color: "#90caf9", fontSize: 11.5, fontWeight: 600, padding: "5px 10px", borderRadius: 5 }}>Apply parameters</button>
+              </div>
+            ) : (
+              <div style={{ fontSize: 11, color: T.green, marginBottom: 10, display: "flex", alignItems: "center", gap: 5 }}>
+                <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 5 L4 7 L8 3" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round" /></svg>
+                Applied. Adjust below or ask again.
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 6 }}>
+              <input value={input} onChange={e => setInput(e.target.value)} placeholder="e.g. wall bracket, 20 kg load"
+                style={{ flex: 1, background: T.viewer, border: `1px solid ${T.line}`, borderRadius: 6, padding: "7px 10px", color: T.fg, fontSize: 12, outline: "none" }} />
+              <button style={{ width: 32, background: T.blueSolid, border: "none", borderRadius: 6, color: "white", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <svg width="12" height="12" viewBox="0 0 14 14"><path d="M7 11 L7 3 M4 6 L7 3 L10 6" stroke="white" strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Sidebar ────────────────────────────────────────────────────────────────
+  function Sidebar({ s, set, onRun, onClear, sameFaceWarn }) {
+    const [showAdvanced, setShowAdvanced] = useState(false);
+    const [chatOpen, setChatOpen] = useState(false);
+    const mat = s.materials[s.material] || {};
+
+    return (
+      <aside style={{ width: 340, minWidth: 340, background: T.side, borderRight: `1px solid ${T.line}`, display: "flex", flexDirection: "column" }}>
+        <header style={{ padding: "16px 20px", borderBottom: `1px solid ${T.line}`, display: "flex", alignItems: "center", gap: 10 }}>
+          <Mark />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 14.5, fontWeight: 700, letterSpacing: "-0.01em" }}>morph<span style={{ color: T.blue }}>AI</span></div>
+            <div style={{ fontSize: 10.5, color: T.faint, marginTop: -1 }}>Topology optimizer</div>
+          </div>
+          <button onClick={() => set({ settingsOpen: !s.settingsOpen })}
+            style={{ background: "transparent", border: `1px solid ${T.line}`, borderRadius: 6, width: 28, height: 28, color: T.muted, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 5.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+        </header>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: "18px 20px 20px" }}>
+          <ChatPanel open={chatOpen} onToggle={() => setChatOpen(!chatOpen)} applied={s.chatApplied}
+            onApply={() => { set({ chatApplied: true, material: "PLA", fixedFace: "Left", loadFace: "Right", forceDir: "-Y", force: 150 }); setChatOpen(false); }} />
+
+          <div style={{ marginTop: 24 }}>
+            <SectionTitle>Material</SectionTitle>
+            <Select value={s.material} onChange={v => set({ material: v })} options={Object.keys(s.materials)} />
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 11, color: T.muted }}>
+              <span>{mat.temp || "—"}</span>
+              <span style={{ color: mat.printable ? T.green : T.warn }}>{mat.printable ? "FDM printable" : "Reference only"}</span>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 24 }}>
+            <SectionTitle>Dimensions <span style={{ color: T.faint, letterSpacing: 0 }}>mm</span></SectionTitle>
+            <SliderRow label="Width"  min={20} max={500} value={s.w} onChange={v => set({ w: v })} unit="mm" />
+            <SliderRow label="Height" min={20} max={500} value={s.h} onChange={v => set({ h: v })} unit="mm" />
+            <SliderRow label="Depth"  min={20} max={500} value={s.d} onChange={v => set({ d: v })} unit="mm" />
+          </div>
+
+          <div style={{ marginTop: 24 }}>
+            <SectionTitle>Support &amp; load</SectionTitle>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 6 }}>
+              <div>
+                <Label>Fixed face</Label>
+                <Select value={s.fixedFace} onChange={v => set({ fixedFace: v })} options={FACE_OPTS} />
+              </div>
+              <div>
+                <Label>Load face</Label>
+                <Select value={s.loadFace} onChange={v => set({ loadFace: v })} options={FACE_OPTS} />
+              </div>
+            </div>
+            {sameFaceWarn && (
+              <div style={{ fontSize: 10.5, color: T.warn, display: "flex", alignItems: "center", gap: 5, marginBottom: 8, marginTop: 4 }}>
+                <svg width="9" height="9" viewBox="0 0 10 10"><path d="M5 1 L9 9 L1 9 Z" stroke="currentColor" strokeWidth="1" fill="none" /></svg>
+                Fixed and load face are the same — optimizer may fail
+              </div>
+            )}
+            <div style={{ marginTop: 10 }}>
+              <SliderRow label="Force" min={10} max={10000} value={s.force} onChange={v => set({ force: v })} unit="N" />
+            </div>
+            <div style={{ marginTop: 2 }}>
+              <Label>Direction <span style={{ color: T.faint, fontWeight: 400, marginLeft: 4 }}>{dirPlain(s.forceDir)}</span></Label>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 3, background: "#10141d", border: `1px solid ${T.line}`, borderRadius: 5, padding: 2 }}>
+                {DIRS.map(d => {
+                  const on = s.forceDir === d.v;
+                  return (
+                    <button key={d.v} onClick={() => set({ forceDir: d.v })}
+                      style={{ background: on ? "rgba(239,83,80,0.15)" : "transparent", border: "none", color: on ? "#ff8a87" : T.muted, fontFamily: "JetBrains Mono", fontSize: 10.5, padding: "4px 0", borderRadius: 3 }}>{d.v}</button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 24 }}>
+            <SectionTitle>Fidelity</SectionTitle>
+            <Segmented value={s.fidelity} onChange={v => set({ fidelity: v })}
+              options={Object.entries(FIDELITY).map(([k, f]) => ({ value: k, label: f.label }))} />
+            <div style={{ fontSize: 10.5, color: T.faint, marginTop: 6 }}>{FIDELITY[s.fidelity]?.note}</div>
+          </div>
+
+          <button onClick={() => setShowAdvanced(!showAdvanced)} style={{ width: "100%", marginTop: 22, padding: "10px 0", background: "transparent", border: "none", borderTop: `1px solid ${T.line}`, color: T.muted, fontSize: 11, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span>Advanced</span>
+            <svg width="10" height="10" viewBox="0 0 10 10" style={{ transform: showAdvanced ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform 0.15s", color: T.faint }}>
+              <path d="M2 4 L5 7 L8 4" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" />
+            </svg>
+          </button>
+          {showAdvanced && (
+            <div style={{ paddingTop: 6 }}>
+              <SliderRow label="Volume fraction" min={0.1} max={0.9} step={0.05} value={s.vf} onChange={v => set({ vf: v })} fmt={v => (v * 100).toFixed(0)} unit="%" />
+              <SliderRow label="Safety factor"   min={1} max={5} step={0.1} value={s.sf} onChange={v => set({ sf: v })} unit="×" />
+              <div style={{ marginTop: 12 }}>
+                <Label>Infill pattern</Label>
+                <Select value={s.infill} onChange={v => set({ infill: v })} options={["Gyroid","Schwartz-P","Honeycomb","Diamond","None"]} />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ padding: "14px 20px 18px", borderTop: `1px solid ${T.line}` }}>
+          {s.running ? (
+            <div style={{ position: "relative", height: 38, borderRadius: 7, overflow: "hidden", background: "#10141d", border: `1px solid rgba(21,101,192,0.3)` }}>
+              <div style={{ position: "absolute", inset: 0, width: `${s.progress}%`, background: T.blueSolid, transition: "width 0.4s" }} />
+              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600, color: "white", mixBlendMode: "difference" }}>
+                Optimizing…
+              </div>
+            </div>
+          ) : (
+            <button onClick={onRun} disabled={sameFaceWarn}
+              style={{ width: "100%", height: 38, borderRadius: 7, background: sameFaceWarn ? "#1a2030" : T.blueSolid, color: sameFaceWarn ? T.faint : "white", border: "none", fontSize: 13, fontWeight: 600, cursor: sameFaceWarn ? "not-allowed" : "pointer" }}>
+              Run optimizer
+            </button>
+          )}
+          {s.hasResults && !s.running && (
+            <button onClick={onClear} style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.muted, fontSize: 11, marginTop: 8, width: "100%", padding: "6px 0", borderRadius: 6 }}>
+              Clear results
+            </button>
+          )}
+          {s.runError && (
+            <div style={{ fontSize: 11, color: T.red, marginTop: 8, textAlign: "center" }}>{s.runError}</div>
+          )}
+        </div>
+      </aside>
+    );
+  }
+
+  // ── 3D Viewer (pseudo-3D SVG, rotatable) ──────────────────────────────────
+  function densityAt(u, v) {
+    const wall = Math.max(0, 1 - u * 3.2) * (0.6 + 0.4 * Math.sin(v * Math.PI));
+    const d1 = Math.abs(v - u * 0.55 - 0.05);
+    const truss1 = Math.exp(-Math.pow(d1 * 9, 2));
+    const d2 = Math.abs(v - (1 - u) * 0.35 - 0.2);
+    const truss2 = 0.55 * Math.exp(-Math.pow(d2 * 11, 2));
+    const tie = Math.exp(-Math.pow((v - 0.85) * 10, 2)) * Math.max(0, u - 0.05);
+    const pad = Math.exp(-Math.pow((u - 0.95) * 12, 2)) * Math.exp(-Math.pow((v - 0.25) * 6, 2));
+    return Math.min(1, Math.max(wall, truss1, truss2, tie, pad));
+  }
+
+  function project(p, rotY = 0.55, rotX = 0.28) {
+    const [x, y, z] = p;
+    const cy = Math.cos(rotY), sy = Math.sin(rotY);
+    const cx = Math.cos(rotX), sx = Math.sin(rotX);
+    const x1 = x * cy + z * sy;
+    const z1 = -x * sy + z * cy;
+    const y1 = y * cx - z1 * sx;
+    const z2 = y * sx + z1 * cx;
+    return [x1, -y1, z2];
+  }
+
+  function Viewer({ s, compact = false }) {
+    const width = compact ? 200 : 960;
+    const height = compact ? 140 : 560;
+    const [rotY, setRotY] = useState(0.55);
+    const [rotX, setRotX] = useState(0.28);
+    const drag = useRef(null);
+    const onDown = e => { if (compact) return; drag.current = { x: e.clientX, y: e.clientY, rY: rotY, rX: rotX }; };
+    const onMove = e => {
+      if (!drag.current) return;
+      setRotY(drag.current.rY + (e.clientX - drag.current.x) * 0.008);
+      setRotX(Math.max(-0.8, Math.min(0.8, drag.current.rX + (e.clientY - drag.current.y) * 0.008)));
+    };
+    const onUp = () => { drag.current = null; };
+
+    const maxDim = Math.max(s.w, s.h, s.d);
+    const sc = (compact ? 55 : 260) / maxDim;
+    const W = s.w * sc, H = s.h * sc, D = s.d * sc;
+
+    const corners = [
+      [-W/2,-H/2,-D/2],[ W/2,-H/2,-D/2],[ W/2, H/2,-D/2],[-W/2, H/2,-D/2],
+      [-W/2,-H/2, D/2],[ W/2,-H/2, D/2],[ W/2, H/2, D/2],[-W/2, H/2, D/2],
+    ].map(p => project(p, rotY, rotX));
+    const edges = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+
+    const faceIx = {
+      Left:[0,3,7,4], Right:[1,2,6,5],
+      Bottom:[0,1,5,4], Top:[3,2,6,7],
+      Front:[0,1,2,3], Back:[4,5,6,7],
+    };
+    const fixedQ = faceIx[s.fixedFace]?.map(i => corners[i]) || [];
+    const loadQ  = faceIx[s.loadFace]?.map(i => corners[i]) || [];
+
+    // Voxel rendering from real or fallback density
+    const voxels = useMemo(() => {
+      if (!s.hasResults) return [];
+      const densGrid = s.densityGrid;  // real 2D array from API, or null
+      const nx = compact ? 14 : 22, ny = compact ? 9 : 14, nz = compact ? 5 : 8;
+      const dx = W/nx, dy = H/ny, dz = D/nz;
+      const out = [];
+      for (let iz = 0; iz < nz; iz++)
+        for (let iy = 0; iy < ny; iy++)
+          for (let ix = 0; ix < nx; ix++) {
+            const u = (ix + 0.5) / nx, v = 1 - (iy + 0.5) / ny;
+            let dens;
+            if (densGrid && densGrid.length > 0) {
+              // sample the real density grid (nely × nelx)
+              const gy = Math.min(densGrid.length - 1, Math.round((1 - v) * (densGrid.length - 1)));
+              const gx = Math.min(densGrid[0].length - 1, Math.round(u * (densGrid[0].length - 1)));
+              dens = densGrid[gy][gx];
+            } else {
+              dens = densityAt(u, v);
+            }
+            if (dens < 0.45) continue;
+            const px = -W/2 + (ix + 0.5) * dx;
+            const py = -H/2 + (iy + 0.5) * dy;
+            const pz = -D/2 + (iz + 0.5) * dz;
+            out.push({ px, py, pz, dx, dy, dz, dens });
+          }
+      return out;
+    }, [s.hasResults, s.densityGrid, W, H, D, compact]);
+
+    const rendered = useMemo(() =>
+      voxels.map(v => {
+        const p = project([v.px, v.py, v.pz], rotY, rotX);
+        return { ...v, sx: p[0], sy: p[1], sz: p[2] };
+      }).sort((a, b) => a.sz - b.sz),
+    [voxels, rotY, rotX]);
+
+    const matColor = (s.materials[s.material] || {}).color || T.blue;
+    const cx = width/2, cy = height/2 + (compact ? 0 : 10);
+    const fixedDepth = fixedQ.length ? fixedQ.reduce((a, b) => a + b[2], 0) / fixedQ.length : 0;
+    const loadDepth  = loadQ.length  ? loadQ.reduce((a, b) => a + b[2], 0) / loadQ.length   : 1;
+
+    const centers = {
+      Left:[-W/2,0,0], Right:[W/2,0,0],
+      Bottom:[0,-H/2,0], Top:[0,H/2,0],
+      Front:[0,0,-D/2], Back:[0,0,D/2],
+    };
+    const dirVecs = { "-X":[-1,0,0], "+X":[1,0,0], "-Y":[0,-1,0], "+Y":[0,1,0], "-Z":[0,0,-1], "+Z":[0,0,1] };
+    const cL = centers[s.loadFace] || [W/2,0,0];
+    const dv = dirVecs[s.forceDir] || [0,-1,0];
+    const tip = [cL[0] + dv[0]*(compact?18:70), cL[1] + dv[1]*(compact?18:70), cL[2] + dv[2]*(compact?18:70)];
+
+    return (
+      <div onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}
+        style={{ position: "relative", width: "100%", height: "100%", background: T.viewer, borderRadius: compact ? 5 : 8, overflow: "hidden", cursor: compact ? "default" : (drag.current ? "grabbing" : "grab") }}>
+        <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
+          <g transform={`translate(${cx},${cy})`}>
+            {(loadDepth < fixedDepth
+              ? [["load", loadQ, T.red], ["fix", fixedQ, T.blue]]
+              : [["fix", fixedQ, T.blue], ["load", loadQ, T.red]]
+            ).map(([k, q, col]) => q.length > 0 && (
+              <polygon key={k} points={q.map(p => `${p[0]},${p[1]}`).join(" ")} fill={`${col}22`} stroke={col} strokeWidth="1.1" strokeOpacity="0.7" />
+            ))}
+            {!s.hasResults && edges.map(([i,j], k) => {
+              const a = corners[i], b = corners[j];
+              return <line key={k} x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke="rgba(255,255,255,0.15)" strokeWidth="1" strokeDasharray="3 3" />;
+            })}
+            {s.hasResults && rendered.map((v, k) => {
+              const a = project([v.px - v.dx/2, v.py - v.dy/2, v.pz + v.dz/2], rotY, rotX);
+              const b = project([v.px + v.dx/2, v.py - v.dy/2, v.pz + v.dz/2], rotY, rotX);
+              const c = project([v.px + v.dx/2, v.py + v.dy/2, v.pz + v.dz/2], rotY, rotX);
+              const d = project([v.px - v.dx/2, v.py + v.dy/2, v.pz + v.dz/2], rotY, rotX);
+              const depth = 0.7 + 0.3 * (v.sz / 200);
+              return (
+                <polygon key={k} points={`${a[0]},${a[1]} ${b[0]},${b[1]} ${c[0]},${c[1]} ${d[0]},${d[1]}`}
+                  fill={matColor} fillOpacity={depth} stroke="rgba(0,0,0,0.25)" strokeWidth="0.3" />
+              );
+            })}
+            {(() => {
+              const b = project(cL, rotY, rotX);
+              const t = project(tip, rotY, rotX);
+              const ddx = t[0] - b[0], ddy = t[1] - b[1];
+              const L = Math.sqrt(ddx*ddx + ddy*ddy) || 1;
+              const ux = ddx/L, uy = ddy/L, px = -uy, py = ux;
+              const head = compact ? 5 : 9, hw = compact ? 3 : 5;
+              return (
+                <g>
+                  <line x1={b[0]} y1={b[1]} x2={t[0] - ux*head} y2={t[1] - uy*head} stroke={T.red} strokeWidth={compact ? 1.3 : 2} strokeDasharray={s.hasResults ? "0" : "4 3"} />
+                  <polygon points={`${t[0]},${t[1]} ${t[0] - ux*head + px*hw},${t[1] - uy*head + py*hw} ${t[0] - ux*head - px*hw},${t[1] - uy*head - py*hw}`} fill={T.red} />
+                </g>
+              );
+            })()}
+          </g>
+        </svg>
+        {!s.hasResults && !s.running && !compact && (
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+            <div style={{ textAlign: "center", color: T.muted, fontSize: 13, maxWidth: 320, lineHeight: 1.5 }}>
+              Set dimensions, load, and material — then run.
+            </div>
+          </div>
+        )}
+        {s.running && (
+          <div style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}>
+            <div style={{ position: "absolute", inset: 0, background: "linear-gradient(110deg, transparent 30%, rgba(66,165,245,0.06) 50%, transparent 70%)", animation: "shimmer 1.8s infinite linear", width: "200%" }} />
+          </div>
+        )}
+        {s.hasResults && !compact && (
+          <div style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: 12, fontSize: 10.5, color: T.muted }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: T.blue }} /> Fixed</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: T.red }} /> Load</span>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Verdict strip ──────────────────────────────────────────────────────────
+  function Verdict({ s }) {
+    if (!s.hasResults) return null;
+    const mat = s.materials[s.material] || {};
+    const safetyOk = s.maxStress * s.sf < (mat.yield || 50);
+    const bimodalOk = s.bimodality >= 0.65;
+    const allOk = safetyOk && bimodalOk && !s.nonConvergent && !s.noLoadPath;
+    const cost = s.filamentCost != null ? `$${s.filamentCost.toFixed(2)}` : `$${((s.mass * (mat.cost || 0.02))).toFixed(2)}`;
+    const timeH = s.printTimeH != null ? `~${s.printTimeH}h` : "~2h 40m";
+
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", background: allOk ? "rgba(76,175,80,0.06)" : "rgba(255,193,7,0.06)", border: `1px solid ${allOk ? "rgba(76,175,80,0.25)" : "rgba(255,193,7,0.25)"}`, borderRadius: 8, marginBottom: 12 }}>
+        <div style={{ width: 28, height: 28, borderRadius: "50%", background: allOk ? T.green : T.warn, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <svg width="14" height="14" viewBox="0 0 14 14">
+            {allOk
+              ? <path d="M3 7 L6 10 L11 4" stroke="white" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+              : <path d="M7 3 L7 8 M7 10 L7 10.2" stroke="#1a1d24" strokeWidth="1.8" strokeLinecap="round" />}
+          </svg>
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: T.fg, lineHeight: 1.3 }}>
+            {allOk
+              ? <>Safe at <b style={{ color: T.green }}>{s.sf.toFixed(1)}×</b> · prints in <b>{timeH}</b> · costs <b>{cost}</b></>
+              : s.noLoadPath
+                ? <span style={{ color: T.red }}>No load path — part would detach. Increase volume fraction.</span>
+                : s.nonConvergent
+                  ? <>Did not converge — try Detail fidelity or raise volume fraction.</>
+                  : s.yieldExceeded
+                    ? <span style={{ color: T.red }}>Yield exceeded — stress too high for {s.material} at {s.sf.toFixed(1)}× safety.</span>
+                    : <>Review needed — grey zone detected, result may be unmanufacturable.</>}
+          </div>
+          <div style={{ fontSize: 11.5, color: T.muted, marginTop: 2 }}>
+            Max stress {s.maxStress.toFixed(1)} MPa vs {mat.yield || 50} MPa yield · {s.mass.toFixed(1)} g · {s.iter} iterations · bimodality {(s.bimodality * 100).toFixed(0)}%
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Diagnostic banners (grey-zone, no-load-path, non-convergent) ───────────
+  function Diagnostics({ s, onDismiss }) {
+    if (!s.hasResults) return null;
+    const issues = [];
+    if (s.bimodality < 0.65)
+      issues.push({ key: "grey", color: T.warn, msg: `Grey-zone alert — ${((1 - s.bimodality) * 100).toFixed(0)}% of elements sit in the 0.2–0.8 density band. Use Detail fidelity or raise SIMP penalty.` });
+    if (s.nonConvergent)
+      issues.push({ key: "conv", color: T.warn, msg: "Did not converge — compliance stopped decreasing. Try increasing Filter Radius or reducing Volume Fraction." });
+    if (s.noLoadPath)
+      issues.push({ key: "path", color: T.red, msg: "No load path found — part would detach from fixture. Increase volume fraction or reduce force." });
+    if (s.yieldExceeded)
+      issues.push({ key: "yield", color: T.red, msg: `Yield exceeded — max stress ${s.maxStress.toFixed(1)} MPa × ${s.sf.toFixed(1)} safety > ${(s.materials[s.material] || {}).yield || 50} MPa yield. Use a stronger material or increase safety factor.` });
+
+    if (!issues.length) return null;
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+        {issues.map(iss => (
+          <div key={iss.key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: `${iss.color}10`, border: `1px solid ${iss.color}40`, borderRadius: 7, fontSize: 12, color: T.fg, animation: "fadeIn 0.3s" }}>
+            <svg width="14" height="14" viewBox="0 0 14 14"><path d="M7 1 L13 12 L1 12 Z" stroke={iss.color} strokeWidth="1.2" fill="none" /><path d="M7 5 L7 8.5 M7 10 L7 10.2" stroke={iss.color} strokeWidth="1.2" strokeLinecap="round" /></svg>
+            <span style={{ flex: 1 }}>{iss.msg}</span>
+            <button onClick={() => onDismiss(iss.key)} style={{ background: "transparent", border: "none", color: T.faint, fontSize: 16, lineHeight: 1, padding: 0 }}>×</button>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // ── History rail ───────────────────────────────────────────────────────────
+  function HistoryRail({ runs, activeId, onSelect }) {
+    if (!runs.length) return null;
+    return (
+      <div style={{ width: 150, borderLeft: `1px solid ${T.line}`, padding: "18px 14px", display: "flex", flexDirection: "column", gap: 10, background: T.side, flexShrink: 0, overflowY: "auto" }}>
+        <div style={{ fontSize: 10.5, fontWeight: 700, color: T.faint, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 2 }}>Runs</div>
+        {runs.map(r => {
+          const on = r.id === activeId;
+          return (
+            <button key={r.id} onClick={() => onSelect(r)}
+              style={{ background: on ? "rgba(66,165,245,0.08)" : "transparent", border: `1px solid ${on ? "rgba(66,165,245,0.35)" : T.line}`, borderRadius: 6, padding: 8, textAlign: "left", color: T.fg, display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ height: 70, background: T.viewer, borderRadius: 4, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <span style={{ fontSize: 9, color: T.faint }}>{r.material}</span>
+              </div>
+              <div style={{ fontSize: 10.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.label}</div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9.5, color: T.faint, fontFamily: "JetBrains Mono" }}>
+                <span>{r.mass_g.toFixed(1)}g</span>
+                <span>{r.material}</span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // ── Tabs ───────────────────────────────────────────────────────────────────
+  function Tabs({ active, onChange, hasResults }) {
+    const tabs = [
+      { id: "mesh",    label: "Result" },
+      { id: "compare", label: "Compare materials" },
+      { id: "analysis",label: "Analysis" },
+      { id: "export",  label: "Export" },
+    ];
+    return (
+      <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
+        {tabs.map(t => {
+          const on = active === t.id;
+          const dim = !hasResults && t.id !== "mesh";
+          return (
+            <button key={t.id} onClick={() => !dim && onChange(t.id)}
+              style={{ background: on ? "rgba(66,165,245,0.1)" : "transparent", border: "none", padding: "7px 14px", borderRadius: 6, color: on ? "#90caf9" : dim ? T.faint : T.muted, fontSize: 12.5, fontWeight: on ? 600 : 500, cursor: dim ? "not-allowed" : "pointer" }}>{t.label}</button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // ── Compare tab ────────────────────────────────────────────────────────────
+  function Compare({ s }) {
+    const rows = Object.entries(s.materials).map(([name, m]) => {
+      const mass = (s.w / 10) * (s.h / 10) * (s.d / 10) * s.vf * m.rho;
+      const comp = 187 / m.E;
+      const ashby = Math.pow(m.E, 1/3) / m.rho;
+      const cost = mass * m.cost;
+      return { name, m, mass, comp, ashby, cost };
+    });
+    const printables = rows.filter(r => r.m.printable);
+    if (!printables.length) return <div style={{ color: T.faint, fontSize: 13 }}>No printable materials loaded.</div>;
+    const stiffest = printables.reduce((a, b) => a.comp < b.comp ? a : b);
+    const lightest  = printables.reduce((a, b) => a.mass < b.mass ? a : b);
+    const bestAshby = printables.reduce((a, b) => a.ashby > b.ashby ? a : b);
+    const rec = bestAshby;
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ padding: "16px 18px", background: "rgba(66,165,245,0.06)", border: `1px solid rgba(66,165,245,0.25)`, borderRadius: 8, display: "flex", alignItems: "center", gap: 16 }}>
+          <div style={{ width: 10, height: 10, borderRadius: "50%", background: rec.m.color, boxShadow: `0 0 10px ${rec.m.color}` }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, color: T.muted, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 3 }}>Recommended</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: T.fg }}>
+              Use <b style={{ color: T.blue }}>{rec.name}</b> — best structural efficiency (E^⅓/ρ) of printable options.
+            </div>
+            <div style={{ fontSize: 11.5, color: T.muted, marginTop: 4 }}>{rec.mass.toFixed(1)} g · ${rec.cost.toFixed(2)} · compliance {rec.comp.toFixed(1)}</div>
+          </div>
+        </div>
+
+        <div style={{ background: T.panel, border: `1px solid ${T.line}`, borderRadius: 8, overflow: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead>
+              <tr>
+                {["Material","E (GPa)","Mass","Cost","Compliance","Ashby","Print"].map(h => (
+                  <th key={h} style={{ textAlign: "left", padding: "12px 16px", fontSize: 10.5, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: T.faint, borderBottom: `1px solid ${T.line}` }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.name} style={{ borderBottom: `1px solid ${T.line}`, background: r.name === rec.name ? "rgba(66,165,245,0.04)" : "transparent" }}>
+                  <td style={{ padding: "13px 16px", color: T.fg }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ width: 7, height: 7, borderRadius: "50%", background: r.m.color }} />
+                      {r.name}
+                      {r.name === stiffest.name && <span style={{ fontSize: 10, color: T.blue, background: "rgba(66,165,245,0.1)", padding: "1px 6px", borderRadius: 3 }}>Stiffest</span>}
+                      {r.name === lightest.name  && <span style={{ fontSize: 10, color: T.green, background: "rgba(76,175,80,0.1)", padding: "1px 6px", borderRadius: 3 }}>Lightest</span>}
+                      {r.name === rec.name && r.name !== stiffest.name && r.name !== lightest.name && <span style={{ fontSize: 10, color: "#90caf9", background: "rgba(21,101,192,0.15)", padding: "1px 6px", borderRadius: 3 }}>Recommended</span>}
+                    </span>
+                  </td>
+                  <td style={{ padding: "13px 16px", fontFamily: "JetBrains Mono", color: T.fg }}>{r.m.E.toFixed(1)}</td>
+                  <td style={{ padding: "13px 16px", fontFamily: "JetBrains Mono", color: T.fg }}>{r.mass.toFixed(1)} g</td>
+                  <td style={{ padding: "13px 16px", fontFamily: "JetBrains Mono", color: T.fg }}>{r.m.printable ? `$${r.cost.toFixed(2)}` : "—"}</td>
+                  <td style={{ padding: "13px 16px", fontFamily: "JetBrains Mono", color: T.fg }}>{r.comp.toFixed(1)}</td>
+                  <td style={{ padding: "13px 16px", fontFamily: "JetBrains Mono", color: T.fg }}>{r.ashby.toFixed(2)}</td>
+                  <td style={{ padding: "13px 16px", color: r.m.printable ? T.green : T.faint, fontSize: 11 }}>{r.m.printable ? "Yes" : "Ref only"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Analysis tab (convergence + density map) ───────────────────────────────
+  function Analysis({ s }) {
+    // Convergence chart from real data
+    const conv = s.convergence && s.convergence.length > 1 ? s.convergence : null;
+    const N = conv ? conv.length - 1 : s.iter;
+
+    const pts = conv
+      ? conv.map((v, i) => [i, v])
+      : Array.from({ length: N + 1 }, (_, i) => [i, 450 * Math.exp(-i / 14) + (s.compliance || 187)]);
+
+    const maxV = pts[0][1], minV = pts[N][1];
+    const w = 800, h = 220;
+    const X = i => 40 + (i / N) * (w - 60);
+    const Y = v => 20 + ((maxV - v) / Math.max(maxV - minV, 1)) * (h - 40);
+
+    // Density heatmap from real grid or fallback
+    const densGrid = s.densityGrid;
+    const dRows = densGrid ? densGrid.length : 14;
+    const dCols = densGrid ? densGrid[0].length : 22;
+
+    return (
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div style={{ background: T.panel, border: `1px solid ${T.line}`, borderRadius: 8, padding: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: T.fg, marginBottom: 4 }}>Convergence</div>
+          <div style={{ fontSize: 11, color: T.muted, marginBottom: 14 }}>
+            Compliance over {N} iterations
+          </div>
+          <svg width="100%" viewBox={`0 0 ${w} ${h}`}>
+            {[0, 0.5, 1].map(v => (
+              <line key={v} x1="40" y1={20 + v*(h-40)} x2={w-20} y2={20 + v*(h-40)} stroke={T.line} strokeWidth="0.5" />
+            ))}
+            <path d={`${pts.map((p, i) => `${i===0?'M':'L'}${X(p[0])},${Y(p[1])}`).join(" ")} L ${X(N)},${Y(minV)} L ${X(0)},${Y(minV)} Z`} fill="rgba(66,165,245,0.15)" />
+            <path d={pts.map((p, i) => `${i===0?'M':'L'}${X(p[0])},${Y(p[1])}`).join(" ")} stroke={T.blue} strokeWidth="1.8" fill="none" />
+            <circle cx={X(N)} cy={Y(pts[N][1])} r="3.5" fill={T.blue} stroke={T.viewer} strokeWidth="2" />
+          </svg>
+        </div>
+        <div style={{ background: T.panel, border: `1px solid ${T.line}`, borderRadius: 8, padding: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: T.fg, marginBottom: 4 }}>Density field</div>
+          <div style={{ fontSize: 11, color: T.muted, marginBottom: 8 }}>
+            Element-wise material density ρ(x,y) · bimodality {(s.bimodality * 100).toFixed(0)}%
+          </div>
+          <svg width="100%" viewBox={`0 0 ${dCols * 22} ${dRows * 16}`} style={{ display: "block" }}>
+            {Array.from({ length: dRows * dCols }, (_, k) => {
+              const ix = k % dCols, iy = Math.floor(k / dCols);
+              const dens = densGrid ? densGrid[iy][ix] : densityAt((ix + 0.5) / dCols, 1 - (iy + 0.5) / dRows);
+              const g = Math.round(dens * 230);
+              return <rect key={k} x={ix * 22} y={iy * 16} width={21} height={15} fill={`rgb(${g}, ${Math.round(g*0.75)}, ${Math.round(g*0.4)})`} />;
+            })}
+          </svg>
+          <div style={{ display: "flex", gap: 12, marginTop: 10, fontSize: 10.5, fontFamily: "JetBrains Mono" }}>
+            {densGrid && (() => {
+              const flat = densGrid.flat();
+              const solid = flat.filter(v => v > 0.8).length;
+              const grey  = flat.filter(v => v > 0.2 && v <= 0.8).length;
+              const voidE = flat.filter(v => v <= 0.2).length;
+              return [
+                <span key="s" style={{ color: T.green }}>Solid {(solid/flat.length*100).toFixed(0)}%</span>,
+                <span key="g" style={{ color: T.warn  }}>Grey {(grey/flat.length*100).toFixed(0)}%</span>,
+                <span key="v" style={{ color: T.faint  }}>Void {(voidE/flat.length*100).toFixed(0)}%</span>,
+              ];
+            })()}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Export tab ─────────────────────────────────────────────────────────────
+  function Export({ s }) {
+    const mat = s.materials[s.material] || {};
+    const matShort = s.material.replace(/\s.*/, "");
+    const fileName = `topo_${matShort}_${s.w}x${s.h}x${s.d}mm.stl`;
+    const cost = s.filamentCost != null ? `$${s.filamentCost.toFixed(2)}` : `$${(s.mass * (mat.cost || 0.02)).toFixed(2)}`;
+    const timeH = s.printTimeH != null ? `~${s.printTimeH}h` : "~2h 40m";
+
+    const handleDownload = () => {
+      if (s.runId) window.open(`/api/runs/${s.runId}/stl`, "_blank");
+    };
+
+    return (
+      <div style={{ display: "grid", gridTemplateColumns: "3fr 2fr", gap: 16, height: "100%" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ flex: 1, minHeight: 280 }}><Viewer s={s} /></div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <button onClick={handleDownload} disabled={!s.runId}
+              style={{ padding: "14px", borderRadius: 7, background: s.runId ? "#1a6b3c" : "#1a2030", color: "white", border: "none", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, cursor: s.runId ? "pointer" : "not-allowed" }}>
+              <svg width="13" height="13" viewBox="0 0 14 14"><path d="M7 1 L7 10 M3 7 L7 11 L11 7 M2 13 L12 13" stroke="white" strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              {s.runId ? `Download ${fileName}` : "Run optimizer first"}
+            </button>
+            <button disabled style={{ padding: "14px", borderRadius: 7, background: "transparent", color: T.faint, border: `1px solid ${T.line}`, fontSize: 13, fontWeight: 600, cursor: "not-allowed" }}>
+              Send to Bambu Studio
+            </button>
+          </div>
+        </div>
+        <div style={{ background: T.panel, border: `1px solid ${T.line}`, borderRadius: 8, padding: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: T.fg, marginBottom: 14 }}>Slicer settings</div>
+          {[
+            ["Material",     s.material],
+            ["Layer height", "0.20 mm"],
+            ["Walls",        "4"],
+            ["Infill",       `${(s.vf * 100).toFixed(0)}% ${s.infill}`],
+            ["Print temp",   mat.temp || "—"],
+            ["Est. time",    timeH],
+            ["Est. mass",    `${s.mass.toFixed(1)} g`],
+            ["Est. cost",    cost],
+          ].map(([k, v]) => (
+            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "9px 0", borderBottom: `1px solid ${T.line}`, fontSize: 12 }}>
+              <span style={{ color: T.muted }}>{k}</span>
+              <span style={{ color: T.fg, fontFamily: /temp|time|mass|height|cost/.test(k.toLowerCase()) ? "JetBrains Mono" : "Inter" }}>{v}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Settings popover ───────────────────────────────────────────────────────
+  function Settings({ open, onClose }) {
+    if (!open) return null;
+    return (
+      <div style={{ position: "absolute", top: 60, left: 240, zIndex: 100, width: 300, background: T.panel, border: `1px solid ${T.lineStrong}`, borderRadius: 10, padding: 18, boxShadow: "0 18px 50px rgba(0,0,0,0.6)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 600 }}>AI settings</div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", color: T.faint, fontSize: 16 }}>×</button>
+        </div>
+        <Label>Provider</Label>
+        <Select value="Anthropic Claude" onChange={() => {}} options={["OpenAI","Anthropic Claude","Google Gemini","Ollama"]} />
+        <div style={{ marginTop: 14 }}>
+          <Label>API Key</Label>
+          <input type="password" placeholder="sk-…"
+            style={{ width: "100%", background: T.viewer, border: `1px solid ${T.line}`, borderRadius: 6, padding: "7px 10px", color: T.fg, fontSize: 12, outline: "none" }} />
+          <div style={{ fontSize: 10.5, color: T.faint, marginTop: 4 }}>Never persisted.</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── App ────────────────────────────────────────────────────────────────────
+  function App() {
+    const [s, setS] = useState({
+      materials:    DEFAULT_MATERIALS,
+      material:     "PLA",
+      w: 100, h: 60, d: 30,
+      fixedFace:    "Left",
+      loadFace:     "Right",
+      forceDir:     "-Y",
+      force:        150,
+      vf:           0.40,
+      sf:           2.0,
+      fidelity:     "standard",
+      infill:       "Gyroid",
+      hasResults:   false,
+      running:      false,
+      progress:     0,
+      runError:     null,
+      chatApplied:  false,
+      activeTab:    "mesh",
+      settingsOpen: false,
+      // result fields
+      runId:        null,
+      compliance:   0,
+      maxStress:    0,
+      iter:         0,
+      mass:         0,
+      bimodality:   0,
+      printTimeH:   null,
+      filamentCost: null,
+      convergence:  null,
+      densityGrid:  null,
+      nonConvergent: false,
+      noLoadPath:   false,
+      yieldExceeded: false,
+    });
+
+    const [runs, setRuns] = useState([]);
+    const [activeRunId, setActiveRunId] = useState(null);
+    const [dismissedBanners, setDismissedBanners] = useState(new Set());
+
+    const set = useCallback(patch => setS(x => ({ ...x, ...patch })), []);
+    const sameFaceWarn = s.fixedFace === s.loadFace;
+
+    // Load materials + run history on mount
+    useEffect(() => {
+      fetch("/api/materials")
+        .then(r => r.json())
+        .then(data => { if (data && Object.keys(data).length) set({ materials: data }); })
+        .catch(() => {});
+
+      fetch("/api/runs")
+        .then(r => r.json())
+        .then(data => { if (data.runs) setRuns(data.runs); })
+        .catch(() => {});
+    }, []);
+
+    // Progress animation while optimizer is running (the API is synchronous)
+    const progressRef = useRef(null);
+    const startProgressAnim = () => {
+      let pct = 0;
+      progressRef.current = setInterval(() => {
+        pct = Math.min(pct + 1.2, 88);
+        set({ progress: pct });
+      }, 400);
+    };
+    const stopProgressAnim = () => {
+      if (progressRef.current) { clearInterval(progressRef.current); progressRef.current = null; }
+    };
+
+    const handleRun = async () => {
+      if (sameFaceWarn || s.running) return;
+      set({ running: true, progress: 0, runError: null, hasResults: false });
+      setDismissedBanners(new Set());
+      startProgressAnim();
+
+      try {
+        const body = {
+          material:  s.material,
+          w: s.w, h: s.h, d: s.d,
+          fixedFace: s.fixedFace,
+          loadFace:  s.loadFace,
+          forceDir:  s.forceDir,
+          force:     s.force,
+          vf:        s.vf,
+          sf:        s.sf,
+          fidelity:  s.fidelity,
+          infill:    s.infill,
+        };
+
+        const res = await fetch("/api/optimize", {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify(body),
+        });
+
+        stopProgressAnim();
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: "Unknown error" }));
+          throw new Error(err.detail || `HTTP ${res.status}`);
+        }
+
+        const result = await res.json();
+
+        set({
+          running:       false,
+          progress:      100,
+          hasResults:    true,
+          activeTab:     "mesh",
+          runId:         result.run_id,
+          compliance:    result.compliance,
+          maxStress:     result.max_stress,
+          iter:          result.iterations,
+          mass:          result.mass_g,
+          bimodality:    result.bimodality,
+          printTimeH:    result.print_time_h,
+          filamentCost:  result.filament_cost,
+          convergence:   result.convergence,
+          densityGrid:   result.density_grid,
+          nonConvergent: result.non_convergent,
+          noLoadPath:    result.no_load_path,
+          yieldExceeded: result.yield_exceeded,
+        });
+
+        // Update history list from API
+        fetch("/api/runs").then(r => r.json()).then(data => { if (data.runs) setRuns(data.runs); }).catch(() => {});
+        setActiveRunId(result.run_id);
+
+      } catch (err) {
+        stopProgressAnim();
+        set({ running: false, progress: 0, runError: err.message });
+      }
+    };
+
+    const handleClear = () => {
+      set({ hasResults: false, activeTab: "mesh", runId: null, runError: null, densityGrid: null, convergence: null });
+      setDismissedBanners(new Set());
+    };
+
+    const handleSelectRun = (run) => {
+      // Restore sidebar params from a historical run
+      set({
+        material:  run.material,
+        w: run.w, h: run.h, d: run.d,
+        fixedFace: run.fixedFace,
+        loadFace:  run.loadFace,
+        forceDir:  run.forceDir,
+        force:     run.force,
+        vf:        run.vf,
+        sf:        run.sf,
+        fidelity:  run.fidelity,
+        infill:    run.infill,
+        hasResults:  true,
+        runId:       run.id,
+        compliance:  run.compliance,
+        maxStress:   run.max_stress,
+        iter:        run.iterations,
+        mass:        run.mass_g,
+        bimodality:  run.bimodality,
+        nonConvergent: false,
+        noLoadPath:  false,
+        yieldExceeded: false,
+        convergence: null,
+        densityGrid: null,
+      });
+      setActiveRunId(run.id);
+    };
+
+    const renderTab = () => {
+      if (!s.hasResults || s.activeTab === "mesh")
+        return <div style={{ flex: 1, minHeight: 0 }}><Viewer s={s} /></div>;
+      if (s.activeTab === "compare")  return <Compare s={s} />;
+      if (s.activeTab === "analysis") return <Analysis s={s} />;
+      if (s.activeTab === "export")   return <Export s={s} />;
+      return null;
+    };
+
+    return (
+      <div style={{ display: "flex", width: "100vw", height: "100vh", overflow: "hidden" }}>
+        <Sidebar s={s} set={set} onRun={handleRun} onClear={handleClear} sameFaceWarn={sameFaceWarn} />
+
+        <main style={{ flex: 1, display: "flex", flexDirection: "column", padding: "20px 28px 24px", minWidth: 0, position: "relative", overflow: "hidden" }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 600, color: T.fg }}>
+                {s.hasResults ? `Optimized ${s.material} · ${s.w}×${s.h}×${s.d} mm` : "Design workspace"}
+              </div>
+              <div style={{ fontSize: 11.5, color: T.muted, marginTop: 2 }}>
+                Load {dirPlain(s.forceDir)} · {s.force} N · fixed {s.fixedFace} face
+              </div>
+            </div>
+          </div>
+
+          <Verdict s={s} />
+          <Diagnostics
+            s={{ ...s, bimodality: dismissedBanners.has("grey") ? 1 : s.bimodality, nonConvergent: !dismissedBanners.has("conv") && s.nonConvergent, noLoadPath: !dismissedBanners.has("path") && s.noLoadPath, yieldExceeded: !dismissedBanners.has("yield") && s.yieldExceeded }}
+            onDismiss={key => setDismissedBanners(prev => new Set([...prev, key]))}
+          />
+          <Tabs active={s.activeTab} onChange={v => set({ activeTab: v })} hasResults={s.hasResults} />
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+            {renderTab()}
+          </div>
+          <Settings open={s.settingsOpen} onClose={() => set({ settingsOpen: false })} />
+        </main>
+
+        <HistoryRail runs={runs} activeId={activeRunId} onSelect={handleSelectRun} />
+      </div>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
