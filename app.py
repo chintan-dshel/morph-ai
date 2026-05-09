@@ -26,6 +26,7 @@ from visualization import (
 )
 from utils import estimate_print, make_history_record
 try:
+    import gmsh as _gmsh_probe; del _gmsh_probe  # presence check — meshing.py imports it lazily
     from meshing import generate_fem_mesh, smooth_surface
     _HAS_GMSH = True
 except Exception:
