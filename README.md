@@ -5,29 +5,29 @@ sdk: docker
 pinned: false
 ---
 
-# MorphAI — AI-Driven Topology Optimizer for FDM 3D Printing
+**AI-Driven Topology Optimizer for FDM 3D Printing**
 
 Describe a mechanical part in plain English. MorphAI extracts the boundary conditions, runs the SIMP topology optimization algorithm, and gives you a print-ready STL with calibrated von Mises stress output — in under 60 seconds.
 
-[Live demo on HF Spaces](https://huggingface.co/spaces/cdshelat/MorphAI) · [Watch the demo](TODO)
+[Live demo](https://huggingface.co/spaces/cdshelat/MorphAI) · [Watch the demo](TODO — record demo video and add link)
 
 ---
 
 ## What's interesting about this
 
-- **Natural language → engineering constraints.** A Claude/GPT extraction layer reads a plain-English description ("wall bracket, holds 20 kg, fixed left, PLA") and extracts face constraints, force direction, magnitude, and material — no form-filling required. This is one of the few AI generalist projects applying LLMs to physics-based optimization rather than text or image tasks.
+- **Natural language → engineering constraints.** A Claude/litellm extraction layer reads a plain-English description ("wall bracket, holds 20 kg, fixed left, PLA") and extracts face constraints, force direction, magnitude, and material — no form-filling required. The LLM layer is wired server-side via a configured HF Space Secret, so it works for all visitors without them supplying an API key.
 
 - **Hand-implemented SIMP solver.** The topology optimizer is not a wrapper around an existing solver library. The SIMP (Solid Isotropic Material with Penalization) algorithm, sparse FEA stiffness assembly, density filter, and optimality criteria update are written from scratch using NumPy and SciPy sparse. The same algorithm is used in aerospace and automotive design tools costing tens of thousands of dollars.
 
-- **2D + 3D solver pipeline.** The 2D Q4 plane-stress solver handles most bracket and plate problems. A true 3D hexahedral solver (`simp_core_3d`) is available for volumetric parts — same SIMP loop, 24 DOF per hex element, full 3D stress and displacement fields.
+- **LLMs applied to physics-based optimization — not text or image tasks.** Almost every AI generalist project touches NLP or computer vision. MorphAI applies the LLM extraction layer to a structural mechanics solver. The combination (NL → constraint extraction → SIMP optimizer → STL) is genuinely uncommon in the generalist AI space, and the pattern transfers to other physical domains.
 
-- **Physically calibrated stress output.** Von Mises stress is returned in real MPa (not normalized), scaled by actual force magnitude and element size, compared against material yield strength with a user-chosen safety factor. The result is actionable for real print decisions.
+- **2D + 3D solver pipeline, physically calibrated output.** The 2D Q4 plane-stress solver handles most bracket and plate problems. A true 3D hexahedral solver is available for volumetric parts. Von Mises stress is returned in real MPa — scaled by actual force magnitude and element size, compared against material yield strength with a user-chosen safety factor. The result is actionable for real print decisions, not normalized to [0, 1].
 
 ---
 
 ## Tech stack
 
-Streamlit · NumPy · SciPy sparse · scikit-image (marching cubes) · Plotly 3D · litellm (multi-provider LLM gateway) · trimesh
+Python · Streamlit · NumPy · SciPy sparse · scikit-image (marching cubes) · Plotly 3D · trimesh · litellm (multi-provider LLM gateway) · Anthropic API · deployed on Hugging Face Spaces (Docker)
 
 ---
 
@@ -44,15 +44,15 @@ Click a **Quick Start preset** — results in ~30 seconds, no API key needed. To
 
 ---
 
-## Secrets (for Space operators)
+## Planned v2
 
-Set `ANTHROPIC_API_KEY` as a Space Secret to enable the chat extraction feature for all visitors without requiring them to supply their own key.
+A React + FastAPI prototype with no Streamlit dependency lives in [`frontend-experimental/`](frontend-experimental/). Planned work: wire the LLM extraction layer from `chat.py` into the FastAPI backend, replace Streamlit session state with a proper REST API, and add collaborative design history.
 
 ---
 
-## Planned v2
+## Secrets (for Space operators)
 
-A React + FastAPI prototype with no Streamlit dependency lives in `frontend-experimental/`. Planned work: wire the LLM extraction layer from `chat.py` into the FastAPI backend.
+Set `ANTHROPIC_API_KEY` as a Space Secret to enable the chat extraction feature for all visitors without requiring them to supply their own key.
 
 ---
 
