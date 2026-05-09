@@ -733,7 +733,7 @@ if _landing:
     _, _left_col, _ = st.columns([1, 4, 1])
     _right_col = st.container()
 else:
-    _left_col, _right_col = st.columns([2, 8] if expert_mode else [3, 7])
+    _left_col, _right_col = st.columns([2, 8] if expert_mode else ([1, 9] if _has_results else [3, 7]))
 
 # ─────────────────────────────────────────────────────────────
 #  LEFT COLUMN — user interaction panel
@@ -1048,12 +1048,6 @@ with _left_col:
             _conf_ld_specs, _conf_sup_specs = _pending_to_specs(p)
             st.session_state["load_specs"]    = _conf_ld_specs
             st.session_state["support_specs"] = _conf_sup_specs
-
-            # Live face diagram — shows fixed (blue) and load (red) faces
-            st.markdown(
-                _face_iso_svg(_conf_sup_specs, _conf_ld_specs),
-                unsafe_allow_html=True,
-            )
 
             run_col, cancel_col = st.columns(2)
             with run_col:
