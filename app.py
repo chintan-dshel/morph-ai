@@ -741,8 +741,19 @@ else:
 # ─────────────────────────────────────────────────────────────
 with _left_col:
     if not expert_mode:
+        chat_state = st.session_state["chat_state"]
 
-        if _landing:
+        if _has_results:
+            _phase = "results"
+        elif chat_state in ("extracting", "confirming"):
+            _phase = "confirming"
+        elif chat_state == "running":
+            _phase = "running"
+        else:
+            _phase = "landing"
+
+        # ── LANDING — hero + AI settings + presets + chat input ──
+        if _phase == "landing":
             st.markdown(
                 "<div style='text-align:center;padding:1.5rem 0 1.2rem 0;'>"
                 "<div style='font-size:1.75rem;font-weight:800;color:#e8eaf6;"
@@ -759,85 +770,77 @@ with _left_col:
                 unsafe_allow_html=True,
             )
 
-        # ── Provider/model/key config ─────────────────────────
-        _has_key = bool(st.session_state["llm_api_key"])
-        _ai_status = (
-            f"● {st.session_state['llm_model']}" if _has_key
-            else "○ No AI key — click to set up"
-        )
-        _ai_color = "#4CAF50" if _has_key else "#FFC107"
-        st.markdown(
-            f"<div style='font-size:0.76rem;color:{_ai_color};"
-            f"margin-bottom:4px;'>{_ai_status}</div>",
-            unsafe_allow_html=True,
-        )
-        with st.expander("AI settings", expanded=False):
-            provider_names = list(chat_module.PROVIDER_PRESETS.keys())
-            prov_idx = (provider_names.index(st.session_state["llm_provider"])
-                        if st.session_state["llm_provider"] in provider_names else 0)
-            provider = st.selectbox("Provider:", provider_names, index=prov_idx)
-            st.session_state["llm_provider"] = provider
-
-            preset = chat_module.PROVIDER_PRESETS[provider]
-            model_opts = preset["models"]
-            cur_model = st.session_state.get("llm_model", model_opts[0])
-            model_idx = model_opts.index(cur_model) if cur_model in model_opts else 0
-            model_custom = st.text_input(
-                "Model (or type custom):", value=model_opts[model_idx],
-                help="Exact model string accepted by litellm, e.g. 'gpt-4o' or 'ollama/llama3.2'"
+            _has_key = bool(st.session_state["llm_api_key"])
+            _ai_status = (
+                f"● {st.session_state['llm_model']}" if _has_key
+                else "○ No AI key — click to set up"
             )
-            st.session_state["llm_model"] = model_custom
-
-            env_key = chat_module.get_api_key_from_env(provider)
-            if env_key:
-                st.success(f"API key found in environment ({preset.get('key_env','')}).")
-                st.session_state["llm_api_key"] = env_key
-            else:
-                api_key_input = st.text_input(
-                    "API Key:", value=st.session_state["llm_api_key"],
-                    type="password",
-                    help="Never stored to disk. Cleared when you close the browser tab."
+            _ai_color = "#4CAF50" if _has_key else "#FFC107"
+            st.markdown(
+                f"<div style='font-size:0.76rem;color:{_ai_color};"
+                f"margin-bottom:4px;'>{_ai_status}</div>",
+                unsafe_allow_html=True,
+            )
+            with st.expander("AI settings", expanded=False):
+                provider_names = list(chat_module.PROVIDER_PRESETS.keys())
+                prov_idx = (provider_names.index(st.session_state["llm_provider"])
+                            if st.session_state["llm_provider"] in provider_names else 0)
+                provider = st.selectbox("Provider:", provider_names, index=prov_idx)
+                st.session_state["llm_provider"] = provider
+                preset = chat_module.PROVIDER_PRESETS[provider]
+                model_opts = preset["models"]
+                cur_model = st.session_state.get("llm_model", model_opts[0])
+                model_idx = model_opts.index(cur_model) if cur_model in model_opts else 0
+                model_custom = st.text_input(
+                    "Model (or type custom):", value=model_opts[model_idx],
+                    help="Exact model string accepted by litellm, e.g. 'gpt-4o' or 'ollama/llama3.2'"
                 )
-                st.session_state["llm_api_key"] = api_key_input
+                st.session_state["llm_model"] = model_custom
+                env_key = chat_module.get_api_key_from_env(provider)
+                if env_key:
+                    st.success(f"API key found in environment ({preset.get('key_env','')}).")
+                    st.session_state["llm_api_key"] = env_key
+                else:
+                    api_key_input = st.text_input(
+                        "API Key:", value=st.session_state["llm_api_key"],
+                        type="password",
+                        help="Never stored to disk. Cleared when you close the browser tab."
+                    )
+                    st.session_state["llm_api_key"] = api_key_input
+                test_col, _ = st.columns([1, 2])
+                with test_col:
+                    if st.button("Test connection", use_container_width=True):
+                        with st.spinner("Testing…"):
+                            ok, msg = chat_module.test_connection(
+                                st.session_state["llm_model"],
+                                st.session_state["llm_api_key"],
+                                st.session_state["llm_provider"],
+                            )
+                        if ok:
+                            st.success(msg)
+                        else:
+                            st.error(msg)
 
-            test_col, _ = st.columns([1, 2])
-            with test_col:
-                if st.button("Test connection", use_container_width=True):
-                    with st.spinner("Testing…"):
-                        ok, msg = chat_module.test_connection(
-                            st.session_state["llm_model"],
-                            st.session_state["llm_api_key"],
-                            st.session_state["llm_provider"],
-                        )
-                    if ok:
-                        st.success(msg)
-                    else:
-                        st.error(msg)
-
-        # ── Quick-Start presets (no API key needed) ──────────────
-        # Quick-start presets — label, icon, short description, params
-        _QUICK_PRESETS = [
-            ("Cantilever", "↔", "Fixed left · load right · 500 N · PLA", {
-                "fixed_face": "left", "load_face": "right",
-                "force_direction": "-Y", "applied_force_n": 500.0,
-                "material": "PLA", "safety_factor": 2.0, "volume_fraction": 0.40,
-                "confidence_notes": "Classic cantilever: fixed on left, downward load on right.",
-            }),
-            ("Bracket", "⌐", "Fixed left · load bottom · 20 kg · PLA", {
-                "fixed_face": "left", "load_face": "bottom",
-                "force_direction": "-Y", "applied_force_n": 196.0,
-                "material": "PLA", "safety_factor": 2.0, "volume_fraction": 0.40,
-                "confidence_notes": "Wall bracket: wall-mounted on left, 20 kg shelf load downward.",
-            }),
-            ("Shelf", "⬛", "Fixed bottom · load top · 100 kg · PETG", {
-                "fixed_face": "bottom", "load_face": "top",
-                "force_direction": "-Y", "applied_force_n": 981.0,
-                "material": "PETG", "safety_factor": 3.0, "volume_fraction": 0.50,
-                "confidence_notes": "Shelf support: base fixed, 100 kg load from above.",
-            }),
-        ]
-
-        if st.session_state["chat_state"] == "idle" and _landing:
+            _QUICK_PRESETS = [
+                ("Cantilever", "↔", "Fixed left · load right · 500 N · PLA", {
+                    "fixed_face": "left", "load_face": "right",
+                    "force_direction": "-Y", "applied_force_n": 500.0,
+                    "material": "PLA", "safety_factor": 2.0, "volume_fraction": 0.40,
+                    "confidence_notes": "Classic cantilever: fixed on left, downward load on right.",
+                }),
+                ("Bracket", "⌐", "Fixed left · load bottom · 20 kg · PLA", {
+                    "fixed_face": "left", "load_face": "bottom",
+                    "force_direction": "-Y", "applied_force_n": 196.0,
+                    "material": "PLA", "safety_factor": 2.0, "volume_fraction": 0.40,
+                    "confidence_notes": "Wall bracket: wall-mounted on left, 20 kg shelf load downward.",
+                }),
+                ("Shelf", "⬛", "Fixed bottom · load top · 100 kg · PETG", {
+                    "fixed_face": "bottom", "load_face": "top",
+                    "force_direction": "-Y", "applied_force_n": 981.0,
+                    "material": "PETG", "safety_factor": 3.0, "volume_fraction": 0.50,
+                    "confidence_notes": "Shelf support: base fixed, 100 kg load from above.",
+                }),
+            ]
             st.markdown(
                 "<div style='font-size:0.72rem;font-weight:600;letter-spacing:0.05em;"
                 "color:rgba(255,255,255,0.35);text-transform:uppercase;"
@@ -855,7 +858,6 @@ with _left_col:
                     f"<div style='font-size:0.71rem;color:rgba(255,255,255,0.38);'>{_qdesc}</div></div>"
                     f"</div>"
                 )
-                # Render the styled card, then an invisible button beneath it
                 _bcol1, _bcol2 = st.columns([5, 1])
                 with _bcol1:
                     st.markdown(_btn_html, unsafe_allow_html=True)
@@ -874,27 +876,12 @@ with _left_col:
                         st.session_state["chat_state"] = "confirming"
                         st.rerun()
 
-        st.markdown(
-            "<div style='font-size:0.72rem;font-weight:600;letter-spacing:0.05em;"
-            "color:rgba(255,255,255,0.35);text-transform:uppercase;"
-            "margin:10px 0 5px 0;'>Or describe in plain English</div>",
-            unsafe_allow_html=True,
-        )
-
-        # ── Conversation history display ──────────────────────
-        for msg in st.session_state["chat_messages"]:
-            role_label = "You" if msg["role"] == "user" else "AI"
-            bubble_color = "royalblue" if msg["role"] == "user" else "#4CAF50"
             st.markdown(
-                f"<div class='chat-bubble' style='border-left-color:{bubble_color}'>"
-                f"<b>{role_label}:</b> {msg['content']}</div>",
+                "<div style='font-size:0.72rem;font-weight:600;letter-spacing:0.05em;"
+                "color:rgba(255,255,255,0.35);text-transform:uppercase;"
+                "margin:10px 0 5px 0;'>Or describe in plain English</div>",
                 unsafe_allow_html=True,
             )
-
-        # ── Chat state machine (input states) ─────────────────
-        chat_state = st.session_state["chat_state"]
-
-        if chat_state == "idle":
             with st.expander(
                 "📎 Upload CAD / STL file  (optional — or just describe your shape below)",
                 expanded=(st.session_state["design_mode"] == "mesh"),
@@ -937,12 +924,11 @@ with _left_col:
 
             with st.form("chat_form", clear_on_submit=True):
                 user_msg = st.text_area(
-                    "Your description:", height=120 if _landing else 80,
+                    "Your description:", height=120,
                     placeholder="e.g. I need a bracket fixed on the left that holds 50kg from the top, made of Nylon PA12.",
                     label_visibility="collapsed",
                 )
                 submitted = st.form_submit_button("Send ▶", use_container_width=True)
-
             if submitted and user_msg.strip():
                 st.session_state["chat_messages"].append(
                     {"role": "user", "content": user_msg.strip()}
@@ -950,119 +936,140 @@ with _left_col:
                 st.session_state["chat_state"] = "extracting"
                 st.rerun()
 
-        elif chat_state == "extracting":
-            with st.spinner("Thinking…"):
-                try:
-                    params = chat_module.extract_params(
-                        st.session_state["chat_messages"][-1]["content"],
-                        st.session_state["llm_model"],
-                        st.session_state["llm_api_key"],
-                        st.session_state["llm_provider"],
+        # ── CONFIRMING — extraction spinner then parameter review ─
+        elif _phase == "confirming":
+            if chat_state == "extracting":
+                with st.spinner("Thinking…"):
+                    try:
+                        params = chat_module.extract_params(
+                            st.session_state["chat_messages"][-1]["content"],
+                            st.session_state["llm_model"],
+                            st.session_state["llm_api_key"],
+                            st.session_state["llm_provider"],
+                        )
+                        st.session_state["pending_params"] = params
+                        notes = params.get("confidence_notes", "")
+                        reply = (
+                            f"I understood your request. Please review the parameters below"
+                            + (f" — note: *{notes}*" if notes else "") + "."
+                        )
+                        st.session_state["chat_messages"].append(
+                            {"role": "assistant", "content": reply}
+                        )
+                        st.session_state["chat_state"] = "confirming"
+                    except Exception as e:
+                        st.session_state["chat_messages"].append(
+                            {"role": "assistant", "content": f"Sorry, I couldn't extract parameters: {e}"}
+                        )
+                        st.session_state["chat_state"] = "idle"
+                st.rerun()
+            else:
+                for msg in st.session_state["chat_messages"]:
+                    role_label = "You" if msg["role"] == "user" else "AI"
+                    bubble_color = "royalblue" if msg["role"] == "user" else "#4CAF50"
+                    st.markdown(
+                        f"<div class='chat-bubble' style='border-left-color:{bubble_color}'>"
+                        f"<b>{role_label}:</b> {msg['content']}</div>",
+                        unsafe_allow_html=True,
                     )
-                    st.session_state["pending_params"] = params
-                    notes = params.get("confidence_notes", "")
-                    reply = (
-                        f"I understood your request. Please review the parameters below"
-                        + (f" — note: *{notes}*" if notes else "") + "."
+
+                p = st.session_state["pending_params"]
+                _CONF_FACE_LABELS = {
+                    "left": "Left face", "right": "Right face",
+                    "bottom": "Bottom face", "top": "Top face",
+                    "front": "Front face", "back": "Back face",
+                }
+                _CONF_DIR_LABELS = {
+                    "-Y": "Downward (-Y)", "+Y": "Upward (+Y)",
+                    "-X": "Leftward (-X)", "+X": "Rightward (+X)",
+                    "-Z": "Into screen (-Z)", "+Z": "Out of screen (+Z)",
+                }
+                _conf_face_opts = list(_CONF_FACE_LABELS.keys())
+
+                def _conf_face_idx(val):
+                    v = str(val).lower().split()[0]
+                    return _conf_face_opts.index(v) if v in _conf_face_opts else 0
+
+                def _conf_dir_idx(val):
+                    dirs = list(_CONF_DIR_LABELS.keys())
+                    return dirs.index(val) if val in dirs else 2
+
+                c1c, c2c = st.columns(2)
+                with c1c:
+                    _ff_sel = st.selectbox(
+                        "Fixed Face",
+                        options=_conf_face_opts,
+                        format_func=lambda v: _CONF_FACE_LABELS[v],
+                        index=_conf_face_idx(p["fixed_face"]),
+                        key="conf_fixed",
                     )
-                    st.session_state["chat_messages"].append(
-                        {"role": "assistant", "content": reply}
+                    p["fixed_face"] = _ff_sel
+                    _lf_sel = st.selectbox(
+                        "Load Face",
+                        options=_conf_face_opts,
+                        format_func=lambda v: _CONF_FACE_LABELS[v],
+                        index=_conf_face_idx(p["load_face"]),
+                        key="conf_load",
                     )
-                    st.session_state["chat_state"] = "confirming"
-                except Exception as e:
-                    st.session_state["chat_messages"].append(
-                        {"role": "assistant", "content": f"Sorry, I couldn't extract parameters: {e}"}
+                    p["load_face"] = _lf_sel
+                    _dir_opts = list(_CONF_DIR_LABELS.keys())
+                    _dir_sel = st.selectbox(
+                        "Force Direction",
+                        options=_dir_opts,
+                        format_func=lambda v: _CONF_DIR_LABELS[v],
+                        index=_conf_dir_idx(p["force_direction"]),
+                        key="conf_dir",
                     )
-                    st.session_state["chat_state"] = "idle"
-            st.rerun()
+                    p["force_direction"] = _dir_sel
+                with c2c:
+                    p["applied_force_n"] = st.number_input("Applied Force (N)",
+                                                            value=float(p["applied_force_n"]),
+                                                            min_value=1.0, step=10.0,
+                                                            key="conf_force")
+                    mat_names = list(MATERIALS.keys())
+                    mat_idx = mat_names.index(p["material"]) if p["material"] in mat_names else 0
+                    p["material"] = st.selectbox("Material", mat_names, index=mat_idx, key="conf_mat")
+                    p["safety_factor"] = st.number_input("Safety Factor",
+                                                          value=float(p["safety_factor"]),
+                                                          min_value=1.0, max_value=5.0, step=0.5,
+                                                          key="conf_sf")
 
-        elif chat_state == "confirming":
-            p = st.session_state["pending_params"]
+                st.session_state["pending_params"] = p
+                _conf_ld_specs, _conf_sup_specs = _pending_to_specs(p)
+                st.session_state["load_specs"]    = _conf_ld_specs
+                st.session_state["support_specs"] = _conf_sup_specs
 
-            # Friendly face labels (no coordinate jargon for non-engineers)
-            _CONF_FACES = ["left", "right", "bottom", "top", "front", "back"]
-            _CONF_FACE_LABELS = {
-                "left": "Left face", "right": "Right face",
-                "bottom": "Bottom face", "top": "Top face",
-                "front": "Front face", "back": "Back face",
-            }
-            _CONF_DIR_LABELS = {
-                "-Y": "Downward (-Y)", "+Y": "Upward (+Y)",
-                "-X": "Leftward (-X)", "+X": "Rightward (+X)",
-                "-Z": "Into screen (-Z)", "+Z": "Out of screen (+Z)",
-            }
-            _conf_face_opts = list(_CONF_FACE_LABELS.keys())
+                run_col, cancel_col = st.columns(2)
+                with run_col:
+                    if st.button("▶ Run Optimization", type="primary", use_container_width=True):
+                        st.session_state["chat_state"] = "running"
+                        st.rerun()
+                with cancel_col:
+                    if st.button("✗ Try again", use_container_width=True):
+                        st.session_state["chat_state"] = "idle"
+                        st.session_state["pending_params"] = None
+                        st.rerun()
 
-            def _conf_face_idx(val):
-                v = str(val).lower().split()[0]  # "Left (X=0)" → "left", "left" → "left"
-                return _conf_face_opts.index(v) if v in _conf_face_opts else 0
-
-            def _conf_dir_idx(val):
-                dirs = list(_CONF_DIR_LABELS.keys())
-                return dirs.index(val) if val in dirs else 2  # default -Y
-
-            c1c, c2c = st.columns(2)
-            with c1c:
-                _ff_sel = st.selectbox(
-                    "Fixed Face",
-                    options=_conf_face_opts,
-                    format_func=lambda v: _CONF_FACE_LABELS[v],
-                    index=_conf_face_idx(p["fixed_face"]),
-                    key="conf_fixed",
-                )
-                p["fixed_face"] = _ff_sel
-
-                _lf_sel = st.selectbox(
-                    "Load Face",
-                    options=_conf_face_opts,
-                    format_func=lambda v: _CONF_FACE_LABELS[v],
-                    index=_conf_face_idx(p["load_face"]),
-                    key="conf_load",
-                )
-                p["load_face"] = _lf_sel
-
-                _dir_opts = list(_CONF_DIR_LABELS.keys())
-                _dir_sel = st.selectbox(
-                    "Force Direction",
-                    options=_dir_opts,
-                    format_func=lambda v: _CONF_DIR_LABELS[v],
-                    index=_conf_dir_idx(p["force_direction"]),
-                    key="conf_dir",
-                )
-                p["force_direction"] = _dir_sel
-            with c2c:
-                p["applied_force_n"] = st.number_input("Applied Force (N)",
-                                                        value=float(p["applied_force_n"]),
-                                                        min_value=1.0, step=10.0,
-                                                        key="conf_force")
-                mat_names = list(MATERIALS.keys())
-                mat_idx = mat_names.index(p["material"]) if p["material"] in mat_names else 0
-                p["material"] = st.selectbox("Material", mat_names, index=mat_idx, key="conf_mat")
-                p["safety_factor"] = st.number_input("Safety Factor",
-                                                      value=float(p["safety_factor"]),
-                                                      min_value=1.0, max_value=5.0, step=0.5,
-                                                      key="conf_sf")
-
-            st.session_state["pending_params"] = p
-
-            # Sync load/support specs → viewer updates live as user edits confirming fields
-            _conf_ld_specs, _conf_sup_specs = _pending_to_specs(p)
-            st.session_state["load_specs"]    = _conf_ld_specs
-            st.session_state["support_specs"] = _conf_sup_specs
-
-            run_col, cancel_col = st.columns(2)
-            with run_col:
-                if st.button("▶ Run Optimization", type="primary", use_container_width=True):
-                    st.session_state["chat_state"] = "running"
-                    st.rerun()
-            with cancel_col:
-                if st.button("✗ Try again", use_container_width=True):
-                    st.session_state["chat_state"] = "idle"
-                    st.session_state["pending_params"] = None
-                    st.rerun()
-
-        elif chat_state == "running":
+        # ── RUNNING ───────────────────────────────────────────────
+        elif _phase == "running":
             st.info("Running optimization… see results on the right →")
+
+        # ── RESULTS — single action: start a new design ───────────
+        elif _phase == "results":
+            if st.button("+ New design", type="primary",
+                         use_container_width=True, key="new_design_btn"):
+                for _k in ["xPhys", "history", "history_lc2", "stress_field",
+                           "stl_bytes", "n_faces", "opt_meta", "mat_scores",
+                           "winners", "infill_stl", "infill_faces", "infill_sf",
+                           "infill_vf", "infill_pattern", "infill_period",
+                           "fem_mesh", "pareto_results", "topology_narration"]:
+                    st.session_state.pop(_k, None)
+                st.session_state["chat_state"]     = "idle"
+                st.session_state["chat_messages"]  = []
+                st.session_state["pending_params"] = None
+                st.session_state["_right_view"]    = "🔷 Topology"
+                st.rerun()
+            st.caption("Results on the right. Download STL from the Export tab.")
 
     else:
         # ── Expert mode: BC editor ────────────────────────────
