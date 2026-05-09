@@ -733,7 +733,7 @@ if _landing:
     _, _left_col, _ = st.columns([1, 4, 1])
     _right_col = st.container()
 else:
-    _left_col, _right_col = st.columns([2, 8] if expert_mode else ([1, 9] if _has_results else [3, 7]))
+    _left_col, _right_col = st.columns([2, 8] if expert_mode else ([2, 8] if _has_results else [3, 7]))
 
 # ─────────────────────────────────────────────────────────────
 #  LEFT COLUMN — user interaction panel
