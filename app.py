@@ -2504,134 +2504,138 @@ Try a <strong style='color:#546e7a;'>Quick Start preset</strong> on the left to 
                         st.info("Run optimizer to generate stress field.")
                 st.divider()
                 st.markdown("### FEM Mesh Export")
-                st.caption(
-                    "Generate a quality tet mesh ready for ICEM CFD, HyperMesh, Fluent, Nastran, or Abaqus. "
-                    "Named boundary groups FIXED / LOAD / FREE are pre-tagged."
-                )
                 if not _HAS_GMSH:
-                    st.warning("gmsh not installed — FEM mesh export unavailable. Run `pip install gmsh` locally.")
-                with st.expander("Mesh settings", expanded=False):
-                    msc1, msc2, msc3 = st.columns(3)
-                    with msc1:
-                        m_global = st.number_input("Target size (mm)", value=5.0,
-                                                   min_value=0.5, max_value=50.0, step=0.5, key="fem_global_size")
-                    with msc2:
-                        m_min = st.number_input("Min size (mm)", value=1.0,
-                                                min_value=0.1, max_value=10.0, step=0.1, key="fem_min_size")
-                    with msc3:
-                        m_max = st.number_input("Max size (mm)", value=15.0,
-                                                min_value=1.0, max_value=100.0, step=1.0, key="fem_max_size")
-                    do_smooth = st.checkbox("Apply Laplacian smoothing (3 iterations)", value=True, key="fem_smooth")
-                    do_refine = st.checkbox("Stress-guided refinement", value=True, key="fem_refine_stress")
-
-                if stl_bytes:
-                    _xp = st.session_state.get("xPhys", np.zeros((1,1)))
-                    _solid_pct = float((_xp>0.5).sum())/_xp.size*100
-                    _void_pct  = float((_xp<0.2).sum())/_xp.size*100
-                    _bimod     = _solid_pct + _void_pct
-                    _mesh_ok   = _bimod >= 75.0
-                    if not _mesh_ok:
-                        st.warning(
-                            f"**Topology too fuzzy for meshing** — {100-_bimod:.0f}% grey-zone. "
-                            f"Re-run with SIMP Penalty ≥ 4.0 and Max Iterations ≥ 80 "
-                            f"(current bimodality {_bimod:.0f}%, need ≥ 75%)."
-                        )
-                    else:
-                        st.success(f"Topology quality OK — {_bimod:.0f}% cleanly solid/void.")
-                    if st.button("Generate FEM Mesh", type="primary", use_container_width=True,
-                                 key="fem_generate_btn", disabled=(not _mesh_ok or not _HAS_GMSH)):
-                        with st.spinner("Running Gmsh…"):
-                            try:
-                                from concurrent.futures import ProcessPoolExecutor
-                                with ProcessPoolExecutor(max_workers=1) as _pool:
-                                    fem_result = _pool.submit(
-                                        generate_fem_mesh, stl_bytes, box_w, box_h, box_d,
-                                        fixed_face, load_face, stress_field,
-                                        m_global, m_min, m_max, do_smooth, do_refine,
-                                    ).result()
-                                st.session_state["fem_mesh"] = fem_result
-                                st.rerun()
-                            except ImportError as ie: st.error(str(ie))
-                            except ValueError  as ve: st.error(f"Mesh failed: {ve}")
-                            except Exception  as exc: st.error(f"Mesh failed: {exc}")
+                    st.info(
+                        "FEM mesh export requires **gmsh**, which isn't available in this hosted environment. "
+                        "To use it, clone the repo and run locally: `pip install gmsh && streamlit run app.py`"
+                    )
                 else:
-                    st.warning("Run the optimizer first to generate the topology surface.")
+                    st.caption(
+                        "Generate a quality tet mesh ready for ICEM CFD, HyperMesh, Fluent, Nastran, or Abaqus. "
+                        "Named boundary groups FIXED / LOAD / FREE are pre-tagged."
+                    )
+                    with st.expander("Mesh settings", expanded=False):
+                        msc1, msc2, msc3 = st.columns(3)
+                        with msc1:
+                            m_global = st.number_input("Target size (mm)", value=5.0,
+                                                       min_value=0.5, max_value=50.0, step=0.5, key="fem_global_size")
+                        with msc2:
+                            m_min = st.number_input("Min size (mm)", value=1.0,
+                                                    min_value=0.1, max_value=10.0, step=0.1, key="fem_min_size")
+                        with msc3:
+                            m_max = st.number_input("Max size (mm)", value=15.0,
+                                                    min_value=1.0, max_value=100.0, step=1.0, key="fem_max_size")
+                        do_smooth = st.checkbox("Apply Laplacian smoothing (3 iterations)", value=True, key="fem_smooth")
+                        do_refine = st.checkbox("Stress-guided refinement", value=True, key="fem_refine_stress")
 
-                fem_mesh = st.session_state.get("fem_mesh")
-                if fem_mesh:
-                    ne=fem_mesh["n_elements"]; nn=fem_mesh["n_nodes"]
-                    ft=fem_mesh["fixed_tris"]; lt=fem_mesh["load_tris"]; frt=fem_mesh["free_tris"]
-                    st.success(f"✓ Mesh ready — **{nn:,} nodes · {ne:,} tet elements**")
-                    gc1,gc2,gc3=st.columns(3)
-                    with gc1: st.metric("FIXED group", f"{ft:,} tri" if ft else "—")
-                    with gc2: st.metric("LOAD group",  f"{lt:,} tri" if lt else "—")
-                    with gc3: st.metric("FREE group",  f"{frt:,} tri")
-                    with st.expander("🔍 Mesh Preview", expanded=True):
-                        _prev_l, _prev_r = st.columns([3, 1])
-                        with _prev_r:
-                            st.markdown("**Render mode**")
-                            _render_mode = st.radio(
-                                "render_mode",
-                                options=["solid_edges","solid","wireframe","quality"],
-                                format_func={"solid_edges":"⬛ Solid + Edges","solid":"🟦 Solid only",
-                                             "wireframe":"🔲 Wireframe","quality":"🌈 Element Quality"}.get,
-                                index=0, key="fem_render_mode", label_visibility="collapsed",
+                    if stl_bytes:
+                        _xp = st.session_state.get("xPhys", np.zeros((1,1)))
+                        _solid_pct = float((_xp>0.5).sum())/_xp.size*100
+                        _void_pct  = float((_xp<0.2).sum())/_xp.size*100
+                        _bimod     = _solid_pct + _void_pct
+                        _mesh_ok   = _bimod >= 75.0
+                        if not _mesh_ok:
+                            st.warning(
+                                f"**Topology too fuzzy for meshing** — {100-_bimod:.0f}% grey-zone. "
+                                f"Re-run with SIMP Penalty ≥ 4.0 and Max Iterations ≥ 80 "
+                                f"(current bimodality {_bimod:.0f}%, need ≥ 75%)."
                             )
-                            st.divider()
-                            st.markdown("**Legend**")
-                            st.markdown(
-                                "<div style='font-size:0.82rem;line-height:1.8;'>"
-                                "<span style='color:#4d90ff;'>■</span> Fixed (support)<br>"
-                                "<span style='color:#ff5252;'>■</span> Load (force)<br>"
-                                "<span style='color:#607d8b;'>■</span> Free surface</div>",
-                                unsafe_allow_html=True,
-                            )
-                            if fem_mesh.get("msh_bytes"):
+                        else:
+                            st.success(f"Topology quality OK — {_bimod:.0f}% cleanly solid/void.")
+                        if st.button("Generate FEM Mesh", type="primary", use_container_width=True,
+                                     key="fem_generate_btn", disabled=not _mesh_ok):
+                            with st.spinner("Running Gmsh…"):
                                 try:
-                                    _qs=fem_quality_stats(fem_mesh["msh_bytes"])
-                                    _all_tris=sum(v["n_tris"] for v in _qs.values())
-                                    _all_good=sum(v["n_tris"]*v["pct_good"]/100 for v in _qs.values())
-                                    _pct_good=(_all_good/_all_tris*100 if _all_tris else 0)
-                                    _grade=("🟢 Excellent" if _pct_good>=90 else "🟡 Good" if _pct_good>=75
-                                            else "🟠 Fair" if _pct_good>=55 else "🔴 Poor")
-                                    st.markdown("**Mesh quality**")
-                                    st.markdown(f"<div style='font-size:0.82rem;line-height:1.9;'>"
-                                                f"<b>{_grade}</b><br>AR &lt; 2: {_pct_good:.0f}% of tris<br>"
-                                                f"Triangles: {_all_tris:,}</div>", unsafe_allow_html=True)
-                                except Exception: pass
-                        with _prev_l:
-                            _msh_traces = fem_surface_traces(fem_mesh["msh_bytes"], render_mode=_render_mode)
-                            if _msh_traces:
-                                _fig_mesh = go.Figure()
-                                for _t in _msh_traces: _fig_mesh.add_trace(_t)
-                                for _t in wireframe(box_w, box_h, box_d, alpha=0.12): _fig_mesh.add_trace(_t)
-                                _mesh_layout = scene3d(box_w, box_h, box_d, 500)
-                                for _ax in ["xaxis","yaxis","zaxis"]:
-                                    _mesh_layout["scene"][_ax]["backgroundcolor"] = "rgba(8,12,20,0)"
-                                _mesh_layout["scene"]["bgcolor"]  = "rgba(8,12,20,1)"
-                                _mesh_layout["paper_bgcolor"]     = "rgba(8,12,20,1)"
-                                _mesh_layout["plot_bgcolor"]      = "rgba(8,12,20,1)"
-                                _fig_mesh.update_layout(**_mesh_layout)
-                                st.plotly_chart(_fig_mesh, use_container_width=True, key="fem_preview_chart")
-                            else:
-                                st.info("Could not parse mesh for preview.")
-                    base=part_name.replace(" ","_"); tag=f"{box_w}x{box_h}x{box_d}"
-                    dc1,dc2,dc3=st.columns(3)
-                    with dc1:
-                        st.download_button("⬇ .msh  (Fluent / ICEM)", data=fem_mesh["msh_bytes"],
-                                           file_name=f"{base}_{tag}.msh", mime="application/octet-stream",
-                                           use_container_width=True, type="primary", key="fem_dl_msh")
-                        st.caption("Fluent · ICEM CFD · OpenFOAM")
-                    with dc2:
-                        st.download_button("⬇ .bdf  (Nastran)", data=fem_mesh["bdf_bytes"],
-                                           file_name=f"{base}_{tag}.bdf", mime="application/octet-stream",
-                                           use_container_width=True, key="fem_dl_bdf")
-                        st.caption("Nastran · HyperMesh · Patran")
-                    with dc3:
-                        st.download_button("⬇ .inp  (Abaqus)", data=fem_mesh["inp_bytes"],
-                                           file_name=f"{base}_{tag}.inp", mime="application/octet-stream",
-                                           use_container_width=True, key="fem_dl_inp")
-                        st.caption("Abaqus · CalculiX")
+                                    from concurrent.futures import ProcessPoolExecutor
+                                    with ProcessPoolExecutor(max_workers=1) as _pool:
+                                        fem_result = _pool.submit(
+                                            generate_fem_mesh, stl_bytes, box_w, box_h, box_d,
+                                            fixed_face, load_face, stress_field,
+                                            m_global, m_min, m_max, do_smooth, do_refine,
+                                        ).result()
+                                    st.session_state["fem_mesh"] = fem_result
+                                    st.rerun()
+                                except ImportError as ie: st.error(str(ie))
+                                except ValueError  as ve: st.error(f"Mesh failed: {ve}")
+                                except Exception  as exc: st.error(f"Mesh failed: {exc}")
+                    else:
+                        st.warning("Run the optimizer first to generate the topology surface.")
+
+                    fem_mesh = st.session_state.get("fem_mesh")
+                    if fem_mesh:
+                        ne=fem_mesh["n_elements"]; nn=fem_mesh["n_nodes"]
+                        ft=fem_mesh["fixed_tris"]; lt=fem_mesh["load_tris"]; frt=fem_mesh["free_tris"]
+                        st.success(f"✓ Mesh ready — **{nn:,} nodes · {ne:,} tet elements**")
+                        gc1,gc2,gc3=st.columns(3)
+                        with gc1: st.metric("FIXED group", f"{ft:,} tri" if ft else "—")
+                        with gc2: st.metric("LOAD group",  f"{lt:,} tri" if lt else "—")
+                        with gc3: st.metric("FREE group",  f"{frt:,} tri")
+                        with st.expander("🔍 Mesh Preview", expanded=True):
+                            _prev_l, _prev_r = st.columns([3, 1])
+                            with _prev_r:
+                                st.markdown("**Render mode**")
+                                _render_mode = st.radio(
+                                    "render_mode",
+                                    options=["solid_edges","solid","wireframe","quality"],
+                                    format_func={"solid_edges":"⬛ Solid + Edges","solid":"🟦 Solid only",
+                                                 "wireframe":"🔲 Wireframe","quality":"🌈 Element Quality"}.get,
+                                    index=0, key="fem_render_mode", label_visibility="collapsed",
+                                )
+                                st.divider()
+                                st.markdown("**Legend**")
+                                st.markdown(
+                                    "<div style='font-size:0.82rem;line-height:1.8;'>"
+                                    "<span style='color:#4d90ff;'>■</span> Fixed (support)<br>"
+                                    "<span style='color:#ff5252;'>■</span> Load (force)<br>"
+                                    "<span style='color:#607d8b;'>■</span> Free surface</div>",
+                                    unsafe_allow_html=True,
+                                )
+                                if fem_mesh.get("msh_bytes"):
+                                    try:
+                                        _qs=fem_quality_stats(fem_mesh["msh_bytes"])
+                                        _all_tris=sum(v["n_tris"] for v in _qs.values())
+                                        _all_good=sum(v["n_tris"]*v["pct_good"]/100 for v in _qs.values())
+                                        _pct_good=(_all_good/_all_tris*100 if _all_tris else 0)
+                                        _grade=("🟢 Excellent" if _pct_good>=90 else "🟡 Good" if _pct_good>=75
+                                                else "🟠 Fair" if _pct_good>=55 else "🔴 Poor")
+                                        st.markdown("**Mesh quality**")
+                                        st.markdown(f"<div style='font-size:0.82rem;line-height:1.9;'>"
+                                                    f"<b>{_grade}</b><br>AR &lt; 2: {_pct_good:.0f}% of tris<br>"
+                                                    f"Triangles: {_all_tris:,}</div>", unsafe_allow_html=True)
+                                    except Exception: pass
+                            with _prev_l:
+                                _msh_traces = fem_surface_traces(fem_mesh["msh_bytes"], render_mode=_render_mode)
+                                if _msh_traces:
+                                    _fig_mesh = go.Figure()
+                                    for _t in _msh_traces: _fig_mesh.add_trace(_t)
+                                    for _t in wireframe(box_w, box_h, box_d, alpha=0.12): _fig_mesh.add_trace(_t)
+                                    _mesh_layout = scene3d(box_w, box_h, box_d, 500)
+                                    for _ax in ["xaxis","yaxis","zaxis"]:
+                                        _mesh_layout["scene"][_ax]["backgroundcolor"] = "rgba(8,12,20,0)"
+                                    _mesh_layout["scene"]["bgcolor"]  = "rgba(8,12,20,1)"
+                                    _mesh_layout["paper_bgcolor"]     = "rgba(8,12,20,1)"
+                                    _mesh_layout["plot_bgcolor"]      = "rgba(8,12,20,1)"
+                                    _fig_mesh.update_layout(**_mesh_layout)
+                                    st.plotly_chart(_fig_mesh, use_container_width=True, key="fem_preview_chart")
+                                else:
+                                    st.info("Could not parse mesh for preview.")
+                        base=part_name.replace(" ","_"); tag=f"{box_w}x{box_h}x{box_d}"
+                        dc1,dc2,dc3=st.columns(3)
+                        with dc1:
+                            st.download_button("⬇ .msh  (Fluent / ICEM)", data=fem_mesh["msh_bytes"],
+                                               file_name=f"{base}_{tag}.msh", mime="application/octet-stream",
+                                               use_container_width=True, type="primary", key="fem_dl_msh")
+                            st.caption("Fluent · ICEM CFD · OpenFOAM")
+                        with dc2:
+                            st.download_button("⬇ .bdf  (Nastran)", data=fem_mesh["bdf_bytes"],
+                                               file_name=f"{base}_{tag}.bdf", mime="application/octet-stream",
+                                               use_container_width=True, key="fem_dl_bdf")
+                            st.caption("Nastran · HyperMesh · Patran")
+                        with dc3:
+                            st.download_button("⬇ .inp  (Abaqus)", data=fem_mesh["inp_bytes"],
+                                               file_name=f"{base}_{tag}.inp", mime="application/octet-stream",
+                                               use_container_width=True, key="fem_dl_inp")
+                            st.caption("Abaqus · CalculiX")
 
             # ── Print Estimate view ────────────────────────────
             elif _right_view == "🖨️ Print Est.":
