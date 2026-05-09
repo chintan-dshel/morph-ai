@@ -836,7 +836,7 @@ with _left_col:
             }),
         ]
 
-        if st.session_state["chat_state"] == "idle":
+        if st.session_state["chat_state"] == "idle" and _landing:
             st.markdown(
                 "<div style='font-size:0.72rem;font-weight:600;letter-spacing:0.05em;"
                 "color:rgba(255,255,255,0.35);text-transform:uppercase;"
@@ -1706,15 +1706,22 @@ Try a <strong style='color:#546e7a;'>Quick Start preset</strong> on the left to 
                     key="_right_view_more",
                 )
 
-            # Resolve which view is active (secondary takes precedence when changed)
-            if _more_choice != "More views…" and _more_choice != _rv_stored:
+            # Resolve which view is active.
+            # Radio takes precedence when the user clicks a primary tab, even if a
+            # secondary view was previously active. Secondary selectbox wins only when
+            # it changed this rerun (i.e. user explicitly picked from "More views…").
+            _radio_prev = _rv_stored if _rv_stored in _rv_primary else _rv_primary[0]
+            _radio_changed = _right_view_radio != _radio_prev
+            _more_changed  = _more_choice != "More views…" and _more_choice != _rv_stored
+
+            if _more_changed:
                 _right_view = _more_choice
                 st.session_state["_right_view"] = _right_view
-            elif _rv_stored in _rv_secondary:
-                _right_view = _rv_stored
-            else:
+            elif _radio_changed or _rv_stored in _rv_primary:
                 _right_view = _right_view_radio
                 st.session_state["_right_view"] = _right_view
+            else:
+                _right_view = _rv_stored
 
             # ── Load result session state ──────────────────────
             xPhys        = st.session_state["xPhys"]
@@ -2061,18 +2068,34 @@ Try a <strong style='color:#546e7a;'>Quick Start preset</strong> on the left to 
                         fig_ph.update_layout(**scene3d(box_w, box_h, box_d, 480))
                         st.plotly_chart(fig_ph, use_container_width=True)
                 with pi2:
-                    st.subheader("Pattern stats")
+                    st.markdown(
+                        "<div style='font-size:0.72rem;font-weight:600;letter-spacing:0.05em;"
+                        "color:rgba(255,255,255,0.35);text-transform:uppercase;"
+                        "margin:0 0 8px 0;'>Pattern stats</div>",
+                        unsafe_allow_html=True,
+                    )
                     if infill_stl:
                         solid_mass_ref = round(
                             (box_w/10)*(box_h/10)*(box_d/10)*meta["vf"]*em_props["rho_gcc"], 1
                         )
                         saving = round((1-infill_mass/solid_mass_ref)*100,1) if solid_mass_ref>0 else 0
-                        mi1, mi2 = st.columns(2)
-                        with mi1: st.metric("Triangles", f"{infill_faces:,}")
-                        with mi2: st.metric("File size",  f"{round(len(infill_stl)/1024,1)} KB")
-                        ma1, ma2 = st.columns(2)
-                        with ma1: st.metric("Infill mass", f"{infill_mass} g")
-                        with ma2: st.metric("Mass saving", f"{saving}%", delta="lighter")
+
+                        def _stat_row(label, value):
+                            return (
+                                f"<div style='display:flex;justify-content:space-between;"
+                                f"margin-bottom:5px;'>"
+                                f"<span style='color:#888;font-size:0.78rem'>{label}</span>"
+                                f"<span style='font-size:0.9rem;font-weight:600;color:#e8eaf6'>{value}</span>"
+                                f"</div>"
+                            )
+
+                        st.markdown(
+                            _stat_row("Triangles", f"{infill_faces:,}") +
+                            _stat_row("File size", f"{round(len(infill_stl)/1024,1)} KB") +
+                            _stat_row("Mass", f"{infill_mass} g") +
+                            _stat_row("Mass saving", f"{saving}%"),
+                            unsafe_allow_html=True,
+                        )
                         st.divider()
                         fname_inf = (f"infill_{i_pattern.lower().replace('-','_')}_"
                                      f"{part_name.replace(' ','_')}_{box_w}x{box_h}x{box_d}.stl")
@@ -2093,7 +2116,7 @@ Try a <strong style='color:#546e7a;'>Quick Start preset</strong> on the left to 
                             plot_bgcolor="rgba(0,0,0,0)",
                             margin=dict(l=30,r=10,t=10,b=30), font=dict(color="white"),
                         )
-                        st.caption("Cross-section slice (Z midpoint)")
+                        st.caption("Cross-section density slice at Z midpoint — shows the repeating infill pattern inside the part.")
                         st.plotly_chart(fig_sl, use_container_width=True)
 
             # ── Compare view ───────────────────────────────────
