@@ -69,3 +69,9 @@ The MBB beam benchmark (Sigmund 2001) is built in. Under Convergence → MBB Ben
 ## License
 
 MIT
+
+---
+
+## See also
+
+Working-method showcase: <https://huggingface.co/spaces/cdshelat/second-brain> — the topology-optimization stress calibration and bimodality convergence patterns from this project are among the 25 curated entries.
